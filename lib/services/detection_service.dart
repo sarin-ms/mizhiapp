@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
@@ -22,6 +23,21 @@ class DetectionService {
   int _inputSize = 300;
   int _numOutputs = 1;
   String _language = 'English';
+
+  Uint8List? _inputUint8Buffer;
+  Float32List? _inputFloatBuffer;
+  Int32List? _xMap;
+  Int32List? _yMap;
+  int _mapSourceW = 0;
+  int _mapSourceH = 0;
+
+  int _ssdNumDet = 0;
+  List<List<List<double>>>? _ssdOutBoxes;
+  List<List<double>>? _ssdOutClasses;
+  List<List<double>>? _ssdOutScores;
+  List<double>? _ssdOutCount;
+
+  List<List<List<double>>>? _yoloOutput;
 
   final Map<String, DateTime> _lastAlertTime = {};
 
@@ -47,17 +63,21 @@ class DetectionService {
       _isUint8 = inTensor.type.toString().contains('uint8');
       _numOutputs = _interpreter!.getOutputTensors().length;
 
-      debugPrint('=== MODEL INFO ===');
-      debugPrint('Labels: ${_labels.length}');
-      debugPrint(
-        'Input: ${inTensor.shape} type=${inTensor.type} size=$_inputSize uint8=$_isUint8',
-      );
-      debugPrint('Output tensors: $_numOutputs');
-      for (int i = 0; i < _numOutputs; i++) {
-        final t = _interpreter!.getOutputTensor(i);
-        debugPrint('  [$i]: shape=${t.shape} type=${t.type}');
+      if (kDebugMode) {
+        debugPrint('=== MODEL INFO ===');
+        debugPrint('Labels: ${_labels.length}');
+        debugPrint(
+          'Input: ${inTensor.shape} type=${inTensor.type} size=$_inputSize uint8=$_isUint8',
+        );
+        debugPrint('Output tensors: $_numOutputs');
+        for (int i = 0; i < _numOutputs; i++) {
+          final t = _interpreter!.getOutputTensor(i);
+          debugPrint('  [$i]: shape=${t.shape} type=${t.type}');
+        }
+        debugPrint('==================');
       }
-      debugPrint('==================');
+
+      _prepareOutputBuffers();
 
       _isInit = true;
 
@@ -69,55 +89,136 @@ class DetectionService {
     }
   }
 
+  void _prepareOutputBuffers() {
+    if (_interpreter == null) return;
+
+    if (_numOutputs >= 4) {
+      _ssdNumDet = _interpreter!.getOutputTensor(0).shape[1];
+      _ssdOutBoxes = List.generate(
+        1,
+        (_) => List.generate(_ssdNumDet, (_) => List.filled(4, 0.0)),
+      );
+      _ssdOutClasses = List.generate(1, (_) => List.filled(_ssdNumDet, 0.0));
+      _ssdOutScores = List.generate(1, (_) => List.filled(_ssdNumDet, 0.0));
+      _ssdOutCount = List.filled(1, 0.0);
+      return;
+    }
+
+    final outShape = _interpreter!.getOutputTensor(0).shape;
+    _yoloOutput = List.generate(
+      outShape[0],
+      (_) => List.generate(outShape[1], (_) => List.filled(outShape[2], 0.0)),
+    );
+  }
+
+  void _ensureInputBuffers() {
+    final rgbSize = _inputSize * _inputSize * 3;
+    _inputUint8Buffer ??= Uint8List(rgbSize);
+    _inputFloatBuffer ??= Float32List(rgbSize);
+  }
+
+  void _ensureScaleMaps(int sourceW, int sourceH) {
+    if (_xMap != null &&
+        _yMap != null &&
+        _mapSourceW == sourceW &&
+        _mapSourceH == sourceH) {
+      return;
+    }
+
+    _xMap = Int32List(_inputSize);
+    _yMap = Int32List(_inputSize);
+    for (int px = 0; px < _inputSize; px++) {
+      _xMap![px] = px * sourceW ~/ _inputSize;
+    }
+    for (int py = 0; py < _inputSize; py++) {
+      _yMap![py] = py * sourceH ~/ _inputSize;
+    }
+
+    _mapSourceW = sourceW;
+    _mapSourceH = sourceH;
+  }
+
+  int _clampToByte(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return v;
+  }
+
   Uint8List _toUint8(CameraImage img) {
+    _ensureInputBuffers();
+    _ensureScaleMaps(img.width, img.height);
+
     final yBuf = img.planes[0].bytes;
     final uBuf = img.planes[1].bytes;
     final vBuf = img.planes[2].bytes;
     final yRow = img.planes[0].bytesPerRow;
     final uvRow = img.planes[1].bytesPerRow;
     final uvPx = img.planes[1].bytesPerPixel ?? 1;
-    final w = img.width;
-    final h = img.height;
-    final out = Uint8List(_inputSize * _inputSize * 3);
+    final xMap = _xMap!;
+    final yMap = _yMap!;
+    final out = _inputUint8Buffer!;
+
     int i = 0;
     for (int py = 0; py < _inputSize; py++) {
-      final sy = py * h ~/ _inputSize;
+      final sy = yMap[py];
+      final yBase = sy * yRow;
+      final uvBase = (sy >> 1) * uvRow;
       for (int px = 0; px < _inputSize; px++) {
-        final sx = px * w ~/ _inputSize;
-        final yv = yBuf[sy * yRow + sx];
-        final uvI = (sy ~/ 2) * uvRow + (sx ~/ 2) * uvPx;
+        final sx = xMap[px];
+        final yv = yBuf[yBase + sx];
+        final uvI = uvBase + (sx >> 1) * uvPx;
         final u = uBuf[uvI] - 128;
         final v = vBuf[uvI] - 128;
-        out[i++] = (yv + 1.402 * v).clamp(0, 255).toInt();
-        out[i++] = (yv - 0.34414 * u - 0.71414 * v).clamp(0, 255).toInt();
-        out[i++] = (yv + 1.772 * u).clamp(0, 255).toInt();
+
+        final c = yv - 16;
+        final y = c < 0 ? 0 : c;
+        final r = (298 * y + 409 * v + 128) >> 8;
+        final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
+        final b = (298 * y + 516 * u + 128) >> 8;
+
+        out[i++] = _clampToByte(r);
+        out[i++] = _clampToByte(g);
+        out[i++] = _clampToByte(b);
       }
     }
     return out;
   }
 
   Float32List _toFloat32(CameraImage img) {
+    _ensureInputBuffers();
+    _ensureScaleMaps(img.width, img.height);
+
     final yBuf = img.planes[0].bytes;
     final uBuf = img.planes[1].bytes;
     final vBuf = img.planes[2].bytes;
     final yRow = img.planes[0].bytesPerRow;
     final uvRow = img.planes[1].bytesPerRow;
     final uvPx = img.planes[1].bytesPerPixel ?? 1;
-    final w = img.width;
-    final h = img.height;
-    final out = Float32List(_inputSize * _inputSize * 3);
+    final xMap = _xMap!;
+    final yMap = _yMap!;
+    final out = _inputFloatBuffer!;
+
     int i = 0;
     for (int py = 0; py < _inputSize; py++) {
-      final sy = py * h ~/ _inputSize;
+      final sy = yMap[py];
+      final yBase = sy * yRow;
+      final uvBase = (sy >> 1) * uvRow;
       for (int px = 0; px < _inputSize; px++) {
-        final sx = px * w ~/ _inputSize;
-        final yv = yBuf[sy * yRow + sx];
-        final uvI = (sy ~/ 2) * uvRow + (sx ~/ 2) * uvPx;
+        final sx = xMap[px];
+        final yv = yBuf[yBase + sx];
+        final uvI = uvBase + (sx >> 1) * uvPx;
         final u = uBuf[uvI] - 128;
         final v = vBuf[uvI] - 128;
-        out[i++] = (yv + 1.402 * v).clamp(0, 255) / 255.0;
-        out[i++] = (yv - 0.34414 * u - 0.71414 * v).clamp(0, 255) / 255.0;
-        out[i++] = (yv + 1.772 * u).clamp(0, 255) / 255.0;
+
+        final c = yv - 16;
+        final y = c < 0 ? 0 : c;
+        final r = (298 * y + 409 * v + 128) >> 8;
+        final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
+        final b = (298 * y + 516 * u + 128) >> 8;
+
+        out[i++] = _clampToByte(r) / 255.0;
+        out[i++] = _clampToByte(g) / 255.0;
+        out[i++] = _clampToByte(b) / 255.0;
       }
     }
     return out;
@@ -146,35 +247,44 @@ class DetectionService {
 
   List<Detection> _runSSD(dynamic input, CameraImage cam) {
     // SSD outputs: boxes[1,N,4], classes[1,N], scores[1,N], count[1]
-    final numDet = _interpreter!.getOutputTensor(0).shape[1];
-
-    final outBoxes = List.generate(
-      1,
-      (_) => List.generate(numDet, (_) => List.filled(4, 0.0)),
-    );
-    final outClasses = List.generate(1, (_) => List.filled(numDet, 0.0));
-    final outScores = List.generate(1, (_) => List.filled(numDet, 0.0));
-    final outCount = List.filled(1, 0.0);
+    if (_ssdOutBoxes == null ||
+        _ssdOutClasses == null ||
+        _ssdOutScores == null ||
+        _ssdOutCount == null) {
+      _prepareOutputBuffers();
+      if (_ssdOutBoxes == null ||
+          _ssdOutClasses == null ||
+          _ssdOutScores == null ||
+          _ssdOutCount == null) {
+        return [];
+      }
+    }
 
     _interpreter!.runForMultipleInputs(
       [input],
-      {0: outBoxes, 1: outClasses, 2: outScores, 3: outCount},
+      {
+        0: _ssdOutBoxes!,
+        1: _ssdOutClasses!,
+        2: _ssdOutScores!,
+        3: _ssdOutCount!,
+      },
     );
 
-    final count = outCount[0].toInt().clamp(0, numDet);
+    final count = _ssdOutCount![0].toInt().clamp(0, _ssdNumDet);
     final W = cam.width.toDouble();
     final H = cam.height.toDouble();
     final List<Detection> detections = [];
 
     for (int i = 0; i < count; i++) {
-      final score = outScores[0][i];
-      final classId = outClasses[0][i].toInt();
+      final score = _ssdOutScores![0][i];
+      final classId = _ssdOutClasses![0][i].toInt();
       if (classId < 0 || classId >= _labels.length) continue;
 
       final label = _labels[classId];
 
       // Different thresholds for different class types
-      final threshold = (label == 'person' ||
+      final threshold =
+          (label == 'person' ||
               label == 'car' ||
               label == 'truck' ||
               label == 'bus')
@@ -183,17 +293,16 @@ class DetectionService {
       if (score < threshold) continue;
 
       // [ymin, xmin, ymax, xmax]
-      final ymin = outBoxes[0][i][0];
-      final xmin = outBoxes[0][i][1];
-      final ymax = outBoxes[0][i][2];
-      final xmax = outBoxes[0][i][3];
+      final ymin = _ssdOutBoxes![0][i][0];
+      final xmin = _ssdOutBoxes![0][i][1];
+      final ymax = _ssdOutBoxes![0][i][2];
+      final xmax = _ssdOutBoxes![0][i][3];
 
       final left = (xmin * W).clamp(0.0, W);
       final top = (ymin * H).clamp(0.0, H);
       final width = ((xmax - xmin) * W).clamp(1.0, W - left);
       final height = ((ymax - ymin) * H).clamp(1.0, H - top);
 
-      debugPrint('SSD: $label ${(score * 100).toInt()}%');
       detections.add(
         Detection(label, score, Rect.fromLTWH(left, top, width, height)),
       );
@@ -202,18 +311,18 @@ class DetectionService {
   }
 
   List<Detection> _runYOLO(dynamic input, CameraImage cam) {
-    final outShape = _interpreter!.getOutputTensor(0).shape;
-    final output = List.generate(
-      outShape[0],
-      (_) => List.generate(outShape[1], (_) => List.filled(outShape[2], 0.0)),
-    );
-    _interpreter!.run(input, output);
+    if (_yoloOutput == null) {
+      _prepareOutputBuffers();
+      if (_yoloOutput == null) return [];
+    }
+
+    _interpreter!.run(input, _yoloOutput!);
 
     final W = cam.width.toDouble();
     final H = cam.height.toDouble();
     final List<Detection> detections = [];
 
-    for (final box in output[0]) {
+    for (final box in _yoloOutput![0]) {
       if (box.length < 6) continue;
       final score = box[4];
       final classId = box[5].round();
@@ -222,7 +331,8 @@ class DetectionService {
       final label = _labels[classId];
 
       // Different thresholds for different class types
-      final threshold = (label == 'person' ||
+      final threshold =
+          (label == 'person' ||
               label == 'car' ||
               label == 'truck' ||
               label == 'bus')
@@ -239,15 +349,8 @@ class DetectionService {
       final frameArea = W * H;
       if (area < frameArea * 0.01) continue; // must be >1% of frame
 
-      debugPrint(
-        'YOLO: $label ${(score * 100).toInt()}%  area=${(area / frameArea * 100).toInt()}%',
-      );
       detections.add(
-        Detection(
-          label,
-          score,
-          Rect.fromLTWH(left, top, width, height),
-        ),
+        Detection(label, score, Rect.fromLTWH(left, top, width, height)),
       );
     }
 
@@ -270,8 +373,10 @@ class DetectionService {
     if (top == null) return null;
     final now = DateTime.now();
     final last = _lastAlertTime[top.label];
-    if (last != null && now.difference(last).inSeconds < kAlertCooldownSeconds)
+    if (last != null &&
+        now.difference(last).inSeconds < kAlertCooldownSeconds) {
       return null;
+    }
     _lastAlertTime[top.label] = now;
 
     // Try localized message first, fall back to English

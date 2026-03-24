@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:mizhi/services/currency_service.dart';
 import 'package:mizhi/utils/settings_helper.dart';
 import 'package:mizhi/utils/localization.dart';
@@ -19,6 +23,7 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
 
   final CurrencyService _currencyService = CurrencyService();
   final FlutterTts _flutterTts = FlutterTts();
+  final SpeechToText _speech = SpeechToText();
 
   CurrencyResult? _result;
   String _lastAnnouncedDenomination = "";
@@ -26,6 +31,10 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   int _frameCount = 0;
   bool _isProcessing = false;
   String _language = 'English';
+  bool _isListening = false;
+  bool _speechReady = false;
+  DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const Duration _voiceCommandCooldown = Duration(seconds: 4);
 
   String? _focusedButton;
 
@@ -50,6 +59,118 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   void initState() {
     super.initState();
     _initServices();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    _speechReady = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        if (status == 'done' || status == 'notListening') {
+          setState(() => _isListening = false);
+          _startListening();
+        }
+      },
+      onError: (_) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        Future<void>.delayed(const Duration(seconds: 2), _startListening);
+      },
+    );
+
+    if (_speechReady) {
+      _startListening();
+    }
+  }
+
+  Future<void> _startListening() async {
+    if (!mounted || !_speechReady || _isListening) return;
+    await _speech.listen(
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 4),
+      listenOptions: SpeechListenOptions(partialResults: true),
+      onResult: _onSpeechResult,
+    );
+    if (mounted) {
+      setState(() => _isListening = true);
+    }
+  }
+
+  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
+    final spoken = result.recognizedWords.trim().toLowerCase();
+    if (spoken.isEmpty) return;
+
+    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
+    final isStreetCommand =
+        normalized.contains('open street') ||
+        normalized.contains('street mode') ||
+        normalized.contains('street smart') ||
+        (normalized.contains('street') && normalized.contains('smart'));
+    final isMoneyCommand =
+        normalized.contains('open money') ||
+        normalized.contains('money mode') ||
+        normalized.contains('money sense') ||
+        (normalized.contains('money') &&
+            (normalized.contains('sense') || normalized.contains('cents')));
+
+    final now = DateTime.now();
+
+    if (isStreetCommand) {
+      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
+        return;
+      }
+      _lastVoiceCommandAt = now;
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/street-smart');
+      }
+      return;
+    }
+
+    if (isMoneyCommand) {
+      return;
+    }
+
+    if (spoken.contains('help me call') || spoken.contains('help me, call')) {
+      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
+        return;
+      }
+      _lastVoiceCommandAt = now;
+      await _triggerEmergencyCall();
+    }
+  }
+
+  Future<void> _triggerEmergencyCall() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString('mizhi_emergency_contact')?.trim() ?? '';
+    final rawPhone = prefs.getString('mizhi_emergency_phone')?.trim() ?? '';
+
+    if (rawPhone.isEmpty) {
+      await _flutterTts.stop();
+      await _flutterTts.speak('No emergency contact saved. Please add one.');
+      if (mounted) {
+        Navigator.pushNamed(context, '/emergency-contact');
+      }
+      return;
+    }
+
+    final normalizedPhone = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final uri = Uri(scheme: 'tel', path: normalizedPhone);
+
+    await _flutterTts.stop();
+    await _flutterTts.speak(
+      name.isNotEmpty ? 'Calling $name' : 'Calling emergency contact',
+    );
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        Navigator.pushNamed(context, '/emergency-contact');
+      }
+    } catch (_) {
+      if (mounted) {
+        Navigator.pushNamed(context, '/emergency-contact');
+      }
+    }
   }
 
   Future<void> _initServices() async {
@@ -142,6 +263,9 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
 
   @override
   void dispose() {
+    if (_speech.isListening) {
+      _speech.stop();
+    }
     if (_cameraController != null &&
         _cameraController!.value.isStreamingImages) {
       _cameraController!.stopImageStream();

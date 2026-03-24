@@ -27,9 +27,13 @@ class CurrencyService {
   bool _isInit = false;
   bool get isInit => _isInit;
 
-  final Map<String, DateTime> _lastAlertTime = {};
-
   static const int inputSize = 224;
+  static const double _minConfidence = 0.85;
+  static const double _minTopGap = 0.18;
+  static const int _requiredStableFrames = 3;
+
+  String? _candidateLabel;
+  int _candidateFrames = 0;
 
   Future<void> init() async {
     try {
@@ -94,9 +98,9 @@ class CurrencyService {
         final u = uBuf[uvI] - 128;
         final v = vBuf[uvI] - 128;
 
-        out[i++] = (yv + 1.402 * v).clamp(0, 255).toInt();       // R
+        out[i++] = (yv + 1.402 * v).clamp(0, 255).toInt(); // R
         out[i++] = (yv - 0.34414 * u - 0.71414 * v).clamp(0, 255).toInt(); // G
-        out[i++] = (yv + 1.772 * u).clamp(0, 255).toInt();       // B
+        out[i++] = (yv + 1.772 * u).clamp(0, 255).toInt(); // B
       }
     }
     return out;
@@ -134,10 +138,14 @@ class CurrencyService {
 
       double maxProb = 0;
       int maxIdx = 0;
+      double secondProb = 0;
       for (int i = 0; i < probs.length; i++) {
         if (probs[i] > maxProb) {
+          secondProb = maxProb;
           maxProb = probs[i];
           maxIdx = i;
+        } else if (probs[i] > secondProb) {
+          secondProb = probs[i];
         }
       }
 
@@ -150,17 +158,24 @@ class CurrencyService {
 
       if (maxIdx < 0 || maxIdx >= _labels.length) return null;
       final label = _labels[maxIdx];
+      final topGap = maxProb - secondProb;
 
-      if (maxProb < 0.80) return null;
-
-      // Cooldown: same denomination not re-announced within 5 seconds
-      final now = DateTime.now();
-      if (_lastAlertTime.containsKey(label)) {
-        if (now.difference(_lastAlertTime[label]!).inSeconds < 5) {
-          return null;
-        }
+      // Since the model has only denomination classes, require a strong and
+      // stable winner before treating it as a valid note.
+      if (maxProb < _minConfidence || topGap < _minTopGap) {
+        _candidateLabel = null;
+        _candidateFrames = 0;
+        return null;
       }
-      _lastAlertTime[label] = now;
+
+      if (_candidateLabel == label) {
+        _candidateFrames++;
+      } else {
+        _candidateLabel = label;
+        _candidateFrames = 1;
+      }
+
+      if (_candidateFrames < _requiredStableFrames) return null;
 
       return CurrencyResult(denomination: label, confidence: maxProb);
     } catch (e) {

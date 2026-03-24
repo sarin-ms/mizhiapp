@@ -18,7 +18,11 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
   final FlutterTts _flutterTts = FlutterTts();
   String? _focusedButton;
 
-  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+  Future<void> _handleButtonTap(
+    String buttonId,
+    String spokenText,
+    VoidCallback action,
+  ) async {
     if (_focusedButton == buttonId) {
       setState(() => _focusedButton = null);
       await _flutterTts.stop();
@@ -55,8 +59,14 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
   Future<void> _save() async {
     setState(() => _isSaving = true);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('mizhi_emergency_contact', _nameController.text.trim());
-    await prefs.setString('mizhi_emergency_phone', _phoneController.text.trim());
+    await prefs.setString(
+      'mizhi_emergency_contact',
+      _nameController.text.trim(),
+    );
+    await prefs.setString(
+      'mizhi_emergency_phone',
+      _phoneController.text.trim(),
+    );
     setState(() => _isSaving = false);
 
     if (mounted) {
@@ -105,8 +115,15 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
         backgroundColor: _bg,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? _teal : Colors.white),
-          onPressed: () => _handleButtonTap('back_button', 'Go back', () => Navigator.pop(context)),
+          icon: Icon(
+            Icons.arrow_back,
+            color: _focusedButton == 'back_button' ? _teal : Colors.white,
+          ),
+          onPressed: () => _handleButtonTap(
+            'back_button',
+            'Go back',
+            () => Navigator.pop(context),
+          ),
         ),
         title: const Text(
           'EMERGENCY CONTACT',
@@ -134,11 +151,15 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
               ),
               child: Row(
                 children: const [
-                  Icon(Icons.warning_amber_rounded, color: Color(0xFFFF4444), size: 32),
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Color(0xFFFF4444),
+                    size: 32,
+                  ),
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'This contact will be alerted in emergencies via voice command "Help Me".',
+                      'This contact will be alerted in emergencies via voice command "Help me call".',
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ),
@@ -148,8 +169,15 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
             const SizedBox(height: 24),
 
             // Name field
-            const Text('Contact Name',
-                style: TextStyle(color: _teal, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            const Text(
+              'Contact Name',
+              style: TextStyle(
+                color: _teal,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
@@ -161,18 +189,30 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
                   hintText: 'e.g. Mom, Dad, Guardian',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3),
+                  ),
                   prefixIcon: const Icon(Icons.person, color: _teal),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 16,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 20),
 
             // Phone field
-            const Text('Phone Number',
-                style: TextStyle(color: _teal, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            const Text(
+              'Phone Number',
+              style: TextStyle(
+                color: _teal,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
@@ -185,10 +225,15 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
                   hintText: '+91 98765 43210',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3),
+                  ),
                   prefixIcon: const Icon(Icons.phone, color: _teal),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 16,
+                  ),
                 ),
               ),
             ),
@@ -199,21 +244,39 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: _isSaving ? null : () => _handleButtonTap('save_contact', 'Save contact', _save),
+                onPressed: _isSaving
+                    ? null
+                    : () => _handleButtonTap(
+                        'save_contact',
+                        'Save contact',
+                        _save,
+                      ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _teal,
-                  side: _focusedButton == 'save_contact' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  side: _focusedButton == 'save_contact'
+                      ? const BorderSide(color: Colors.white, width: 2)
+                      : BorderSide.none,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   elevation: 0,
                 ),
                 child: _isSaving
                     ? const SizedBox(
-                        width: 24, height: 24,
-                        child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.black,
+                          strokeWidth: 2,
+                        ),
+                      )
                     : const Text(
                         'SAVE CONTACT',
                         style: TextStyle(
-                            color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold),
+                          color: Colors.black,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
               ),
             ),
@@ -224,14 +287,29 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
               width: double.infinity,
               height: 48,
               child: OutlinedButton(
-                onPressed: () => _handleButtonTap('remove_contact', 'Remove contact', _delete),
+                onPressed: () => _handleButtonTap(
+                  'remove_contact',
+                  'Remove contact',
+                  _delete,
+                ),
                 style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: _focusedButton == 'remove_contact' ? Colors.white : const Color(0xFFFF4444), width: _focusedButton == 'remove_contact' ? 2 : 1),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  side: BorderSide(
+                    color: _focusedButton == 'remove_contact'
+                        ? Colors.white
+                        : const Color(0xFFFF4444),
+                    width: _focusedButton == 'remove_contact' ? 2 : 1,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: const Text(
                   'REMOVE CONTACT',
-                  style: TextStyle(color: Color(0xFFFF4444), fontSize: 14, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Color(0xFFFF4444),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
