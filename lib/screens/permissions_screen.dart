@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/utils/settings_helper.dart';
 
 class PermissionsScreen extends StatefulWidget {
   const PermissionsScreen({super.key});
@@ -14,10 +16,35 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
   bool _micGranted = false;
   bool _contactsGranted = false;
 
+  final FlutterTts _flutterTts = FlutterTts();
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(
+    String buttonId,
+    String spokenText,
+    VoidCallback action,
+  ) async {
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _checkPermissions();
+    applyTtsSettings(_flutterTts);
   }
 
   Future<void> _checkPermissions() async {
@@ -88,16 +115,16 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(12),  // Extra padding to match the icon background in the image
+            padding: const EdgeInsets.all(
+              12,
+            ), // Extra padding to match the icon background in the image
             decoration: BoxDecoration(
-              color: const Color(0xFF262A3D), // Slightly lighter background for the icon
+              color: const Color(
+                0xFF262A3D,
+              ), // Slightly lighter background for the icon
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF00D4AA),
-              size: 36,
-            ),
+            child: Icon(icon, color: const Color(0xFF00D4AA), size: 36),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -115,19 +142,12 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(color: Colors.white60, fontSize: 14),
                 ),
               ],
             ),
           ),
-          if (isGranted)
-            const Icon(
-              Icons.check_circle,
-              color: Colors.green,
-            )
+          if (isGranted) const Icon(Icons.check_circle, color: Colors.green),
         ],
       ),
     );
@@ -141,14 +161,19 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
         backgroundColor: const Color(0xFF0A0E21),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
+          icon: Icon(
+            Icons.arrow_back,
+            color: _focusedButton == 'back_button'
+                ? const Color(0xFF00D4AA)
+                : Colors.white,
+          ),
+          onPressed: () => _handleButtonTap('back_button', 'Go back', () {
             if (Navigator.canPop(context)) {
               Navigator.pop(context);
             } else {
               SystemNavigator.pop();
             }
-          },
+          }),
         ),
         title: const Text(
           "MIZHI",
@@ -162,8 +187,16 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onPressed: () {},
+            icon: Icon(
+              Icons.settings,
+              color: _focusedButton == 'settings_button'
+                  ? const Color(0xFF00D4AA)
+                  : Colors.white,
+            ),
+            onPressed: () =>
+                _handleButtonTap('settings_button', 'Settings Menu', () {
+                  Navigator.pushNamed(context, '/settings');
+                }),
           ),
         ],
       ),
@@ -181,7 +214,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                   height: 140,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: const Color(0xFF161A2D), // dark icon background 
+                    color: const Color(0xFF161A2D), // dark icon background
                   ),
                   alignment: Alignment.center,
                   child: const Icon(
@@ -204,13 +237,10 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                 const Text(
                   "Mizhi needs these permissions to guide you safely.",
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white60,
-                    fontSize: 16,
-                  ),
+                  style: TextStyle(color: Colors.white60, fontSize: 16),
                 ),
                 const SizedBox(height: 32),
-                
+
                 _buildPermissionRow(
                   icon: Icons.camera_alt,
                   title: "Camera",
@@ -229,16 +259,23 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                   subtitle: "For emergency alerts",
                   isGranted: _contactsGranted,
                 ),
-                
+
                 const SizedBox(height: 32),
-                
+
                 SizedBox(
                   width: double.infinity,
                   height: 64,
                   child: ElevatedButton(
-                    onPressed: _requestPermissions,
+                    onPressed: () => _handleButtonTap(
+                      'allow_all',
+                      'Allow All and Continue',
+                      _requestPermissions,
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF00D4AA),
+                      side: _focusedButton == 'allow_all'
+                          ? const BorderSide(color: Colors.white, width: 2)
+                          : BorderSide.none,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),

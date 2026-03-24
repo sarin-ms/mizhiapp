@@ -26,6 +26,25 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   bool _isDetecting = false;
   int _frameCount = 0;
 
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
+
   bool _voiceEnabled = true;
   bool _vibrationEnabled = true;
 
@@ -162,15 +181,18 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     required String labelOff,
     required Color colorOn,
     required VoidCallback onTap,
+    required String buttonId,
+    required String spokenText,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () => _handleButtonTap(buttonId, spokenText, onTap),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
           color: isOn ? colorOn : Colors.grey.shade700,
           borderRadius: BorderRadius.circular(20),
+          border: _focusedButton == buttonId ? Border.all(color: Colors.white, width: 2) : null,
         ),
         child: Text(
           isOn ? labelOn : labelOff,
@@ -203,7 +225,10 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => _handleButtonTap('go_back', 'Go back', () => Navigator.pop(context)),
+                style: ElevatedButton.styleFrom(
+                  side: _focusedButton == 'go_back' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
+                ),
                 child: const Text('Go back'),
               ),
             ],
@@ -261,8 +286,8 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: _stopAndPop,
+                    icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? const Color(0xFF00D4AA) : Colors.white),
+                    onPressed: () => _handleButtonTap('back_button', 'Go back', _stopAndPop),
                   ),
                   const Text(
                     'STREET SMART',
@@ -273,12 +298,12 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.stop_circle,
                       color: Colors.red,
-                      size: 32,
+                      size: _focusedButton == 'stop_button' ? 36 : 32,
                     ),
-                    onPressed: _stopAndPop,
+                    onPressed: () => _handleButtonTap('stop_button', 'Stop checking', _stopAndPop),
                   ),
                 ],
               ),
@@ -342,6 +367,8 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                         labelOn: 'VOICE: ON',
                         labelOff: 'VOICE: OFF',
                         colorOn: const Color(0xFF00D4AA),
+                        buttonId: 'voice_toggle_pill',
+                        spokenText: 'Toggle Voice, currently ${_voiceEnabled ? "On" : "Off"}',
                         onTap: () =>
                             setState(() => _voiceEnabled = !_voiceEnabled),
                       ),
@@ -351,6 +378,8 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                         labelOn: 'VIBRATION: ON',
                         labelOff: 'VIBRATION: OFF',
                         colorOn: Colors.purple,
+                        buttonId: 'vibration_toggle_pill',
+                        spokenText: 'Toggle Vibration, currently ${_vibrationEnabled ? "On" : "Off"}',
                         onTap: () => setState(
                           () => _vibrationEnabled = !_vibrationEnabled,
                         ),
@@ -396,11 +425,23 @@ class BoundingBoxPainter extends CustomPainter {
     final bgPaint = Paint()..color = const Color(0xCC000000);
 
     for (final det in detections) {
+      // Landscape X maps to Portrait Y
+      // Landscape Y maps to Portrait X
+      // For 90-degree CW rotation of the back camera:
+      // The box returned by det.boundingBox is:
+      // det.boundingBox.left = top of portrait screen (X in landscape)
+      // det.boundingBox.top = right of portrait screen (Y in landscape)
+      // wait, actually we just need sizes to be transposed:
+      final boxW_on_screen = det.boundingBox.height * scaleX; 
+      final boxH_on_screen = det.boundingBox.width * scaleY;
+      
+      // Because left/right might be flipped or transposed simply by multiplying,
+      // let's do the standard transpose: left => top * scaleX, top => left * scaleY
       final r = Rect.fromLTWH(
-        det.boundingBox.left * scaleX,
-        det.boundingBox.top * scaleY,
-        det.boundingBox.width * scaleX,
-        det.boundingBox.height * scaleY,
+        det.boundingBox.top * scaleX,
+        det.boundingBox.left * scaleY,
+        boxW_on_screen,
+        boxH_on_screen,
       );
 
       canvas.drawRRect(

@@ -12,6 +12,31 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final FlutterTts _flutterTts = FlutterTts();
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    if (_focusedButton == buttonId) {
+      setState(() {
+        _focusedButton = null;
+      });
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() {
+        _focusedButton = buttonId;
+      });
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() {
+            _focusedButton = null;
+          });
+        }
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -143,11 +168,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     GestureDetector(
                       onTap: () {
-                        Navigator.pushNamed(context, '/settings');
+                        _handleButtonTap(
+                          'settings',
+                          'Settings Menu',
+                          () => Navigator.pushNamed(context, '/settings'),
+                        );
                       },
-                      child: const Icon(
+                      child: Icon(
                         Icons.settings,
-                        color: Colors.white,
+                        color: _focusedButton == 'settings' ? const Color(0xFF00D4AA) : Colors.white,
                         size: 28,
                       ),
                     ),
@@ -185,14 +214,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       // Street Smart
                       _buildModeCard(
                         bgColor: const Color(0xFF0F4F45),
-                        borderColor: const Color(0xFF00D4AA),
+                        borderColor: _focusedButton == 'street_smart' ? Colors.white : const Color(0xFF00D4AA),
                         icon: Icons.directions_walk,
                         iconColor: const Color(0xFF00D4AA),
                         title: "STREET SMART",
                         subtitle: "Detect vehicles & obstacles",
                         subtitleColor: const Color(0xFF00D4AA),
                         onTap: () {
-                          Navigator.pushNamed(context, '/street-smart');
+                          _handleButtonTap(
+                            'street_smart',
+                            'Street Smart mode',
+                            () => Navigator.pushNamed(context, '/street-smart'),
+                          );
                         },
                       ),
                       
@@ -201,14 +234,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       // Money Sense
                       _buildModeCard(
                         bgColor: const Color(0xFF2A1F5F),
-                        borderColor: const Color(0xFF6C3FBF),
+                        borderColor: _focusedButton == 'money_sense' ? Colors.white : const Color(0xFF6C3FBF),
                         icon: Icons.currency_rupee,
                         iconColor: const Color(0xFF9B6FE8),
                         title: "MONEY SENSE",
                         subtitle: "Identify currency notes",
                         subtitleColor: const Color(0xFF9B6FE8),
                         onTap: () {
-                          Navigator.pushNamed(context, '/money-sense');
+                          _handleButtonTap(
+                            'money_sense',
+                            'Money sense mode',
+                            () => Navigator.pushNamed(context, '/money-sense'),
+                          );
                         },
                       ),
                       
@@ -220,13 +257,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         height: 64,
                         child: ElevatedButton(
                           onPressed: () {
-                            Navigator.pushNamed(context, '/emergency-contact');
+                            _handleButtonTap(
+                              'emergency_contact',
+                              'Emergency contact',
+                              () => Navigator.pushNamed(context, '/emergency-contact'),
+                            );
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFFF4444),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
                             ),
+                            side: _focusedButton == 'emergency_contact'
+                                ? const BorderSide(color: Colors.white, width: 2)
+                                : BorderSide.none,
                             elevation: 0,
                           ),
                           child: Row(

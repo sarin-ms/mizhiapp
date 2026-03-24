@@ -20,6 +20,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _emergencyContact = '';
 
   final FlutterTts _tts = FlutterTts();
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _tts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _tts.stop();
+      await _tts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
 
   static const _teal = Color(0xFF00D4AA);
   static const _cardColor = Color(0xFF1A1E35);
@@ -72,15 +90,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String? subtitle,
     required Widget trailing,
     VoidCallback? onTap,
+    String? buttonId,
+    String? spokenText,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        if (buttonId != null && spokenText != null && onTap != null) {
+          _handleButtonTap(buttonId, spokenText, onTap);
+        } else if (onTap != null) {
+          onTap();
+        } else if (buttonId != null && spokenText != null) {
+          _handleButtonTap(buttonId, spokenText, () {});
+        }
+      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: _cardColor,
           borderRadius: BorderRadius.circular(12),
+          border: _focusedButton == buttonId ? Border.all(color: Colors.white, width: 2) : null,
         ),
         child: Row(
           children: [
@@ -133,17 +162,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _speedPill(String label) {
     final selected = _alertSpeed == label;
     return GestureDetector(
-      onTap: () {
+      onTap: () => _handleButtonTap('speed_$label', '$label speed', () {
         setState(() => _alertSpeed = label);
         _save('mizhi_alert_speed', label);
         _applyTts();
-      },
+      }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? _teal : _pillUnselected,
           borderRadius: BorderRadius.circular(20),
+          border: _focusedButton == 'speed_$label' ? Border.all(color: Colors.white, width: 2) : null,
         ),
         child: Text(
           label.toUpperCase(),
@@ -165,8 +195,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: const Color(0xFF0A0E21),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? _teal : Colors.white),
+          onPressed: () => _handleButtonTap('back_button', 'Go back', () => Navigator.pop(context)),
         ),
         title: const Text(
           'SETTINGS',
@@ -195,6 +225,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.language,
             iconColor: _teal,
             title: 'Voice Language',
+            buttonId: 'voice_language_row',
+            spokenText: 'Voice Language, currently $_language',
             trailing: Theme(
               data: Theme.of(context).copyWith(
                 canvasColor: _cardColor,
@@ -243,6 +275,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.volume_up,
             iconColor: _teal,
             title: 'Voice Volume',
+            buttonId: 'voice_volume_row',
+            spokenText: 'Voice Volume Slider',
             trailing: SizedBox(
               width: 140,
               child: SliderTheme(
@@ -271,6 +305,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: _teal,
             title: 'Vibration',
             subtitle: 'Silent mode feedback',
+            buttonId: 'vibration_row',
+            spokenText: 'Vibration Switch',
             trailing: Switch(
               value: _vibration,
               activeColor: _teal,
@@ -291,6 +327,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Emergency Contact',
             subtitle:
                 _emergencyContact.isEmpty ? 'Not set' : _emergencyContact,
+            buttonId: 'emergency_contact_row',
+            spokenText: 'Emergency Contact, currently ' + (_emergencyContact.isEmpty ? 'Not set' : _emergencyContact),
             trailing:
                 const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
             onTap: () async {
@@ -315,6 +353,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: _teal,
             title: 'Alert Cooldown',
             subtitle: 'Seconds between same alert',
+            buttonId: 'alert_cooldown_row',
+            spokenText: 'Alert Cooldown control',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -324,7 +364,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     kAlertCooldownSeconds = _cooldownSeconds;
                     _save('mizhi_cooldown', _cooldownSeconds);
                   }
-                }),
+                }, 'Decrease'),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Text(
@@ -341,7 +381,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     kAlertCooldownSeconds = _cooldownSeconds;
                     _save('mizhi_cooldown', _cooldownSeconds);
                   }
-                }),
+                }, 'Increase'),
               ],
             ),
           ),
@@ -354,6 +394,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.dark_mode,
             iconColor: _teal,
             title: 'Dark Mode',
+            buttonId: 'dark_mode_row',
+            spokenText: 'Dark Mode Switch, always on',
             trailing: Switch(
               value: true,
               activeColor: _teal,
@@ -369,6 +411,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.info_outline,
             iconColor: _teal,
             title: 'App Version',
+            buttonId: 'app_version_row',
+            spokenText: 'App Version Mizhi v1.0.0',
             trailing: const Text(
               'Mizhi v1.0.0',
               style: TextStyle(color: Colors.white54, fontSize: 14),
@@ -400,9 +444,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: TextStyle(color: Colors.white60, fontSize: 13)),
                 const SizedBox(height: 12),
                 OutlinedButton(
-                  onPressed: () {},
+                  onPressed: () => _handleButtonTap('contact_support', 'Contact Support', () {}),
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: _teal),
+                    side: BorderSide(
+                        color: _focusedButton == 'contact_support' ? Colors.white : _teal,
+                        width: _focusedButton == 'contact_support' ? 2 : 1),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(
@@ -424,15 +470,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _cooldownBtn(IconData icon, VoidCallback onTap) {
+  Widget _cooldownBtn(IconData icon, VoidCallback onTap, String actionName) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () => _handleButtonTap('cooldown_$actionName', '$actionName cooldown', onTap),
       child: Container(
         width: 32,
         height: 32,
         decoration: BoxDecoration(
           color: _pillUnselected,
           borderRadius: BorderRadius.circular(8),
+          border: _focusedButton == 'cooldown_$actionName' ? Border.all(color: Colors.white, width: 2) : null,
         ),
         child: Icon(icon, color: _teal, size: 18),
       ),

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/utils/settings_helper.dart';
 
 class EmergencyContactScreen extends StatefulWidget {
   const EmergencyContactScreen({super.key});
@@ -13,6 +15,26 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
   final _phoneController = TextEditingController();
   bool _isSaving = false;
 
+  final FlutterTts _flutterTts = FlutterTts();
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
+
   static const _teal = Color(0xFF00D4AA);
   static const _bg = Color(0xFF0A0E21);
   static const _card = Color(0xFF1A1E35);
@@ -21,6 +43,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
   void initState() {
     super.initState();
     _loadSaved();
+    applyTtsSettings(_flutterTts);
   }
 
   Future<void> _loadSaved() async {
@@ -68,6 +91,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
 
   @override
   void dispose() {
+    _flutterTts.stop();
     _nameController.dispose();
     _phoneController.dispose();
     super.dispose();
@@ -81,8 +105,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
         backgroundColor: _bg,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? _teal : Colors.white),
+          onPressed: () => _handleButtonTap('back_button', 'Go back', () => Navigator.pop(context)),
         ),
         title: const Text(
           'EMERGENCY CONTACT',
@@ -175,9 +199,10 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: _isSaving ? null : _save,
+                onPressed: _isSaving ? null : () => _handleButtonTap('save_contact', 'Save contact', _save),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _teal,
+                  side: _focusedButton == 'save_contact' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   elevation: 0,
                 ),
@@ -199,9 +224,9 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
               width: double.infinity,
               height: 48,
               child: OutlinedButton(
-                onPressed: _delete,
+                onPressed: () => _handleButtonTap('remove_contact', 'Remove contact', _delete),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFFF4444)),
+                  side: BorderSide(color: _focusedButton == 'remove_contact' ? Colors.white : const Color(0xFFFF4444), width: _focusedButton == 'remove_contact' ? 2 : 1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
                 child: const Text(

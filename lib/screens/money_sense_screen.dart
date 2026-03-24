@@ -27,6 +27,25 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   bool _isProcessing = false;
   String _language = 'English';
 
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -142,8 +161,8 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? const Color(0xFF00D4AA) : Colors.white),
+            onPressed: () => _handleButtonTap('back_button', 'Go back', () => Navigator.pop(context)),
           ),
         ),
         body: const Center(
@@ -189,8 +208,8 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: _stopAndPop,
+                    icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button_main' ? const Color(0xFF00D4AA) : Colors.white),
+                    onPressed: () => _handleButtonTap('back_button_main', 'Go back', _stopAndPop),
                   ),
                   const Text(
                     "MONEY SENSE",
@@ -201,10 +220,10 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.white),
-                    onPressed: () {
+                    icon: Icon(Icons.settings, color: _focusedButton == 'settings_button' ? const Color(0xFF00D4AA) : Colors.white),
+                    onPressed: () => _handleButtonTap('settings_button', 'Settings Menu', () {
                       Navigator.pushNamed(context, '/settings');
-                    },
+                    }),
                   ),
                 ],
               ),
@@ -341,11 +360,12 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: () {
+              onPressed: () => _handleButtonTap('announce_again', 'Announce again', () {
                 _flutterTts.speak(_currencyAnnouncement(res.denomination));
-              },
+              }),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00D4AA),
+                side: _focusedButton == 'announce_again' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),

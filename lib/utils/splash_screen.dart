@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/utils/settings_helper.dart';
 import 'dart:async';
 
 class SplashScreen extends StatefulWidget {
@@ -15,9 +17,32 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _opacityAnimation;
   Timer? _timer;
 
+  final FlutterTts _flutterTts = FlutterTts();
+  String? _focusedButton;
+
+  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+    // If tapped once, cancel auto-navigation timer as user is interacting manually
+    _timer?.cancel();
+    if (_focusedButton == buttonId) {
+      setState(() => _focusedButton = null);
+      await _flutterTts.stop();
+      action();
+    } else {
+      setState(() => _focusedButton = buttonId);
+      await _flutterTts.stop();
+      await _flutterTts.speak(spokenText);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _focusedButton == buttonId) {
+          setState(() => _focusedButton = null);
+        }
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    applyTtsSettings(_flutterTts);
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
@@ -53,6 +78,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _flutterTts.stop();
     _timer?.cancel();
     _animationController.dispose();
     super.dispose();
@@ -125,9 +151,10 @@ class _SplashScreenState extends State<SplashScreen>
                   width: double.infinity,
                   height: 64,
                   child: ElevatedButton(
-                    onPressed: _navigateNext,
+                    onPressed: () => _handleButtonTap('get_started', 'Get Started', _navigateNext),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF00D4AA),
+                      side: _focusedButton == 'get_started' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
