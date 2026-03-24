@@ -1,0 +1,447 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mizhi/utils/alert_messages.dart';
+import 'package:mizhi/utils/settings_helper.dart';
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  String _language = 'English';
+  String _alertSpeed = 'Normal';
+  double _volume = 0.8;
+  bool _vibration = true;
+  int _cooldownSeconds = 3;
+  String _emergencyContact = '';
+
+  final FlutterTts _tts = FlutterTts();
+
+  static const _teal = Color(0xFF00D4AA);
+  static const _cardColor = Color(0xFF1A1E35);
+  static const _pillUnselected = Color(0xFF2A2E45);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _language = prefs.getString('mizhi_language') ?? 'English';
+      _alertSpeed = prefs.getString('mizhi_alert_speed') ?? 'Normal';
+      _volume = prefs.getDouble('mizhi_volume') ?? 0.8;
+      _vibration = prefs.getBool('mizhi_vibration') ?? true;
+      _cooldownSeconds = prefs.getInt('mizhi_cooldown') ?? 3;
+      _emergencyContact = prefs.getString('mizhi_emergency_contact') ?? '';
+    });
+    kAlertCooldownSeconds = _cooldownSeconds;
+    _applyTts();
+  }
+
+  Future<void> _save(String key, dynamic value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is String) {
+      prefs.setString(key, value);
+    } else if (value is double) {
+      prefs.setDouble(key, value);
+    } else if (value is bool) {
+      prefs.setBool(key, value);
+    } else if (value is int) {
+      prefs.setInt(key, value);
+    }
+  }
+
+  void _applyTts() {
+    _tts.setLanguage(languageCodes[_language] ?? 'en-IN');
+    _tts.setVolume(_volume);
+    _tts.setSpeechRate(speedRates[_alertSpeed] ?? 0.55);
+  }
+
+  // ───────────── reusable row card ─────────────
+  Widget _buildSettingRow({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    String? subtitle,
+    required Widget trailing,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 28),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                  if (subtitle != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(subtitle,
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 13)),
+                    ),
+                ],
+              ),
+            ),
+            trailing,
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────── section label ─────────────
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8, top: 16),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(text,
+            style: const TextStyle(
+                color: _teal,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2)),
+      ),
+    );
+  }
+
+  // ───────────── pill button for alert speed ─────────────
+  Widget _speedPill(String label) {
+    final selected = _alertSpeed == label;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _alertSpeed = label);
+        _save('mizhi_alert_speed', label);
+        _applyTts();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? _teal : _pillUnselected,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            color: selected ? Colors.black : Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0E21),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0A0E21),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'SETTINGS',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Icon(Icons.settings, color: _teal, size: 24),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        children: [
+          // ── VOICE & ALERTS ──
+          _sectionLabel('VOICE & ALERTS'),
+
+          // 1 — Voice Language
+          _buildSettingRow(
+            icon: Icons.language,
+            iconColor: _teal,
+            title: 'Voice Language',
+            trailing: Theme(
+              data: Theme.of(context).copyWith(
+                canvasColor: _cardColor,
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _language,
+                  style: const TextStyle(color: _teal, fontSize: 14),
+                  icon: const Icon(Icons.arrow_drop_down, color: _teal),
+                  items: ['English', 'Hindi', 'Tamil', 'Malayalam', 'Telugu']
+                      .map((l) => DropdownMenuItem(
+                          value: l,
+                          child: Text(l,
+                              style: const TextStyle(color: _teal))))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _language = v);
+                    _save('mizhi_language', v);
+                    _applyTts();
+                  },
+                ),
+              ),
+            ),
+          ),
+
+          // 2 — Alert Speed
+          _buildSettingRow(
+            icon: Icons.speed,
+            iconColor: _teal,
+            title: 'Alert Speed',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _speedPill('Slow'),
+                const SizedBox(width: 6),
+                _speedPill('Normal'),
+                const SizedBox(width: 6),
+                _speedPill('Fast'),
+              ],
+            ),
+          ),
+
+          // 3 — Voice Volume
+          _buildSettingRow(
+            icon: Icons.volume_up,
+            iconColor: _teal,
+            title: 'Voice Volume',
+            trailing: SizedBox(
+              width: 140,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: _teal,
+                  inactiveTrackColor: _pillUnselected,
+                  thumbColor: _teal,
+                  overlayColor: _teal.withOpacity(0.2),
+                  trackHeight: 4,
+                ),
+                child: Slider(
+                  value: _volume,
+                  onChanged: (v) {
+                    setState(() => _volume = v);
+                    _save('mizhi_volume', v);
+                    _applyTts();
+                  },
+                ),
+              ),
+            ),
+          ),
+
+          // 4 — Vibration
+          _buildSettingRow(
+            icon: Icons.vibration,
+            iconColor: _teal,
+            title: 'Vibration',
+            subtitle: 'Silent mode feedback',
+            trailing: Switch(
+              value: _vibration,
+              activeColor: _teal,
+              onChanged: (v) {
+                setState(() => _vibration = v);
+                _save('mizhi_vibration', v);
+              },
+            ),
+          ),
+
+          // ── SAFETY ──
+          _sectionLabel('SAFETY'),
+
+          // 5 — Emergency Contact
+          _buildSettingRow(
+            icon: Icons.emergency,
+            iconColor: const Color(0xFFFF4444),
+            title: 'Emergency Contact',
+            subtitle:
+                _emergencyContact.isEmpty ? 'Not set' : _emergencyContact,
+            trailing:
+                const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
+            onTap: () async {
+              final result =
+                  await Navigator.pushNamed(context, '/emergency-contact');
+              if (result is String && result.isNotEmpty) {
+                setState(() => _emergencyContact = result);
+              } else {
+                // re-read from prefs in case the screen saved it
+                final prefs = await SharedPreferences.getInstance();
+                setState(() {
+                  _emergencyContact =
+                      prefs.getString('mizhi_emergency_contact') ?? '';
+                });
+              }
+            },
+          ),
+
+          // 6 — Alert Cooldown
+          _buildSettingRow(
+            icon: Icons.timer,
+            iconColor: _teal,
+            title: 'Alert Cooldown',
+            subtitle: 'Seconds between same alert',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _cooldownBtn(Icons.remove, () {
+                  if (_cooldownSeconds > 1) {
+                    setState(() => _cooldownSeconds--);
+                    kAlertCooldownSeconds = _cooldownSeconds;
+                    _save('mizhi_cooldown', _cooldownSeconds);
+                  }
+                }),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    '$_cooldownSeconds',
+                    style: const TextStyle(
+                        color: _teal,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+                _cooldownBtn(Icons.add, () {
+                  if (_cooldownSeconds < 10) {
+                    setState(() => _cooldownSeconds++);
+                    kAlertCooldownSeconds = _cooldownSeconds;
+                    _save('mizhi_cooldown', _cooldownSeconds);
+                  }
+                }),
+              ],
+            ),
+          ),
+
+          // ── APPEARANCE ──
+          _sectionLabel('APPEARANCE'),
+
+          // 7 — Dark Mode (always on)
+          _buildSettingRow(
+            icon: Icons.dark_mode,
+            iconColor: _teal,
+            title: 'Dark Mode',
+            trailing: Switch(
+              value: true,
+              activeColor: _teal,
+              onChanged: null, // always on
+            ),
+          ),
+
+          // ── ABOUT ──
+          _sectionLabel('ABOUT'),
+
+          // 8 — App Version
+          _buildSettingRow(
+            icon: Icons.info_outline,
+            iconColor: _teal,
+            title: 'App Version',
+            trailing: const Text(
+              'Mizhi v1.0.0',
+              style: TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          ),
+
+          // 9 — Need Assistance card
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F4F45),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.headset_mic, color: _teal, size: 32),
+                const SizedBox(height: 8),
+                const Text('Need Assistance?',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Text(
+                    'Access voice-guided support by saying "Help Me"',
+                    style: TextStyle(color: Colors.white60, fontSize: 13)),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: () {},
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: _teal),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                  ),
+                  child: const Text('CONTACT SUPPORT',
+                      style: TextStyle(
+                          color: _teal,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14)),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+  Widget _cooldownBtn(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: _pillUnselected,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, color: _teal, size: 18),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _tts.stop();
+    super.dispose();
+  }
+}
