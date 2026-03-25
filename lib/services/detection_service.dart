@@ -255,7 +255,7 @@ class DetectionService {
     return detections.take(5).toList();
   }
 
-  String? getAlertMessage(List<Detection> detections) {
+  String? getAlertMessage(List<Detection> detections, [double camW = 480, double camH = 640]) {
     if (detections.isEmpty) return null;
     Detection? top;
     int best = -1;
@@ -276,12 +276,43 @@ class DetectionService {
     }
     _lastAlertTime[top.label] = now;
 
+    final directionalMsg = _getDirectionalAlertStr(top, camW, camH);
+    if (directionalMsg != null) return directionalMsg;
+
     // Try localized message first, fall back to English
     final localized = getLocalizedAlert(top.label, _language);
     if (localized.isNotEmpty) return localized;
     return alertMessages[top.label] ??
         alertMessages[top.label.toLowerCase()] ??
         '${top.label} detected';
+  }
+
+  String? _getDirectionalAlertStr(Detection d, double camW, double camH) {
+    // The camera image axes: 'cam.width' (camW) maps to Portrait Y ('left', 'width' of box)
+    // 'cam.height' (camH) maps to Portrait X ('top', 'height' of box)
+    
+    final portraitWidth = camH;
+    final portraitHeight = camW;
+    
+    final boxPortraitX = d.boundingBox.top;
+    final boxPortraitWidth = d.boundingBox.height;
+    final boxPortraitHeight = d.boundingBox.width;
+
+    final portraitCenterX = boxPortraitX + (boxPortraitWidth / 2);
+    final fractionX = portraitCenterX / portraitWidth;
+    
+    final areaRatio = (boxPortraitWidth * boxPortraitHeight) / (portraitWidth * portraitHeight);
+    final isClose = areaRatio > 0.08 || (boxPortraitHeight / portraitHeight) > 0.3;
+    
+    if (isClose && fractionX >= 0.3 && fractionX <= 0.7) {
+      if (fractionX <= 0.5) {
+        return "${d.label} ahead, move right";
+      } else {
+        return "${d.label} ahead, move left";
+      }
+    }
+    
+    return null;
   }
 
   /// Reload language from prefs (call after returning from settings)

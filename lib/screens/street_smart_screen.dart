@@ -285,7 +285,11 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
         });
       }
 
-      final msg = _detectionService.getAlertMessage(detections);
+      final msg = _detectionService.getAlertMessage(
+        detections,
+        image.width.toDouble(),
+        image.height.toDouble(),
+      );
       final now = DateTime.now();
       if (msg != null &&
           !_isAlertInProgress &&
