@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:mizhi/utils/splash_screen.dart';
 import 'package:mizhi/screens/permissions_screen.dart';
 import 'package:mizhi/screens/home_screen.dart';
@@ -7,7 +8,9 @@ import 'package:mizhi/screens/money_sense_screen.dart';
 import 'package:mizhi/screens/settings_screen.dart';
 import 'package:mizhi/screens/emergency_contact_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const MyApp());
 }
 

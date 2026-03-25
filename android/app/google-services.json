@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "553243901145",
+    "firebase_url": "https://mizhi-app-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "mizhi-app",
+    "storage_bucket": "mizhi-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:553243901145:android:1c5091ecabe897cf8892c8",
+        "android_client_info": {
+          "package_name": "com.example.mizhi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADSsfsV6jZxloSp2ooypHw7Yz8PniejOk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

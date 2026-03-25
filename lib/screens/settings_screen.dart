@@ -3,6 +3,8 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mizhi/utils/alert_messages.dart';
 import 'package:mizhi/utils/settings_helper.dart';
+import 'package:flutter/services.dart';
+import 'package:mizhi/services/firebase_location_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,6 +14,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool _liveTracking = false;
+  final FirebaseLocationService _firebaseService = FirebaseLocationService();
+
   String _language = 'English';
   String _alertSpeed = 'Normal';
   double _volume = 0.8;
@@ -50,8 +55,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadPrefs() async {
+    await _firebaseService.init();
     final prefs = await SharedPreferences.getInstance();
     setState(() {
+      _liveTracking = _firebaseService.isEnabled;
       _language = prefs.getString('mizhi_language') ?? 'English';
       _alertSpeed = prefs.getString('mizhi_alert_speed') ?? 'Normal';
       _volume = prefs.getDouble('mizhi_volume') ?? 0.8;
@@ -347,6 +354,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
             },
           ),
+          
+          // 5.1 — Live tracking
+          _buildLiveTrackingCard(),
 
           // 6 — Alert Cooldown
           _buildSettingRow(
@@ -484,6 +494,114 @@ class _SettingsScreenState extends State<SettingsScreen> {
           border: _focusedButton == 'cooldown_$actionName' ? Border.all(color: Colors.white, width: 2) : null,
         ),
         child: Icon(icon, color: _teal, size: 18),
+      ),
+    );
+  }
+
+  Widget _buildLiveTrackingCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: _liveTracking
+            ? Border.all(color: _teal, width: 1)
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.location_on, color: _teal, size: 28),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Live location tracking',
+                      style: TextStyle(color: Colors.white,
+                          fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text('Emergency contact sees your live location',
+                      style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _liveTracking,
+                activeTrackColor: _teal.withValues(alpha: 0.5),
+                activeThumbColor: _teal,
+                onChanged: (val) async {
+                  setState(() => _liveTracking = val);
+                  await _firebaseService.setEnabled(val);
+                },
+              ),
+            ],
+          ),
+
+          if (_liveTracking) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A0E21),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Share this link with emergency contact:',
+                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Text(
+                    _firebaseService.trackingUrl,
+                    style: const TextStyle(
+                      color: _teal,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Copy link button
+                  GestureDetector(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(
+                          text: _firebaseService.trackingUrl));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Link copied!'),
+                          backgroundColor: _teal,
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _teal,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.copy, color: Colors.black, size: 16),
+                          SizedBox(width: 6),
+                          Text('Copy link',
+                            style: TextStyle(color: Colors.black,
+                                fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Updates every 30 seconds. Free, uses internet.',
+              style: TextStyle(color: Colors.white38, fontSize: 11)),
+          ],
+        ],
       ),
     );
   }
