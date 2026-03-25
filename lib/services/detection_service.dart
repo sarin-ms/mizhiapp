@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
@@ -24,12 +23,7 @@ class DetectionService {
   int _numOutputs = 1;
   String _language = 'English';
 
-  Uint8List? _inputUint8Buffer;
-  Float32List? _inputFloatBuffer;
-  Int32List? _xMap;
-  Int32List? _yMap;
-  int _mapSourceW = 0;
-  int _mapSourceH = 0;
+
 
   int _ssdNumDet = 0;
   List<List<List<double>>>? _ssdOutBoxes;
@@ -111,127 +105,30 @@ class DetectionService {
     );
   }
 
-  void _ensureInputBuffers() {
-    final rgbSize = _inputSize * _inputSize * 3;
-    _inputUint8Buffer ??= Uint8List(rgbSize);
-    _inputFloatBuffer ??= Float32List(rgbSize);
-  }
 
-  void _ensureScaleMaps(int sourceW, int sourceH) {
-    if (_xMap != null &&
-        _yMap != null &&
-        _mapSourceW == sourceW &&
-        _mapSourceH == sourceH) {
-      return;
-    }
-
-    _xMap = Int32List(_inputSize);
-    _yMap = Int32List(_inputSize);
-    for (int px = 0; px < _inputSize; px++) {
-      _xMap![px] = px * sourceW ~/ _inputSize;
-    }
-    for (int py = 0; py < _inputSize; py++) {
-      _yMap![py] = py * sourceH ~/ _inputSize;
-    }
-
-    _mapSourceW = sourceW;
-    _mapSourceH = sourceH;
-  }
-
-  int _clampToByte(int v) {
-    if (v < 0) return 0;
-    if (v > 255) return 255;
-    return v;
-  }
-
-  Uint8List _toUint8(CameraImage img) {
-    _ensureInputBuffers();
-    _ensureScaleMaps(img.width, img.height);
-
-    final yBuf = img.planes[0].bytes;
-    final uBuf = img.planes[1].bytes;
-    final vBuf = img.planes[2].bytes;
-    final yRow = img.planes[0].bytesPerRow;
-    final uvRow = img.planes[1].bytesPerRow;
-    final uvPx = img.planes[1].bytesPerPixel ?? 1;
-    final xMap = _xMap!;
-    final yMap = _yMap!;
-    final out = _inputUint8Buffer!;
-
-    int i = 0;
-    for (int py = 0; py < _inputSize; py++) {
-      final sy = yMap[py];
-      final yBase = sy * yRow;
-      final uvBase = (sy >> 1) * uvRow;
-      for (int px = 0; px < _inputSize; px++) {
-        final sx = xMap[px];
-        final yv = yBuf[yBase + sx];
-        final uvI = uvBase + (sx >> 1) * uvPx;
-        final u = uBuf[uvI] - 128;
-        final v = vBuf[uvI] - 128;
-
-        final c = yv - 16;
-        final y = c < 0 ? 0 : c;
-        final r = (298 * y + 409 * v + 128) >> 8;
-        final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
-        final b = (298 * y + 516 * u + 128) >> 8;
-
-        out[i++] = _clampToByte(r);
-        out[i++] = _clampToByte(g);
-        out[i++] = _clampToByte(b);
-      }
-    }
-    return out;
-  }
-
-  Float32List _toFloat32(CameraImage img) {
-    _ensureInputBuffers();
-    _ensureScaleMaps(img.width, img.height);
-
-    final yBuf = img.planes[0].bytes;
-    final uBuf = img.planes[1].bytes;
-    final vBuf = img.planes[2].bytes;
-    final yRow = img.planes[0].bytesPerRow;
-    final uvRow = img.planes[1].bytesPerRow;
-    final uvPx = img.planes[1].bytesPerPixel ?? 1;
-    final xMap = _xMap!;
-    final yMap = _yMap!;
-    final out = _inputFloatBuffer!;
-
-    int i = 0;
-    for (int py = 0; py < _inputSize; py++) {
-      final sy = yMap[py];
-      final yBase = sy * yRow;
-      final uvBase = (sy >> 1) * uvRow;
-      for (int px = 0; px < _inputSize; px++) {
-        final sx = xMap[px];
-        final yv = yBuf[yBase + sx];
-        final uvI = uvBase + (sx >> 1) * uvPx;
-        final u = uBuf[uvI] - 128;
-        final v = vBuf[uvI] - 128;
-
-        final c = yv - 16;
-        final y = c < 0 ? 0 : c;
-        final r = (298 * y + 409 * v + 128) >> 8;
-        final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
-        final b = (298 * y + 516 * u + 128) >> 8;
-
-        out[i++] = _clampToByte(r) / 255.0;
-        out[i++] = _clampToByte(g) / 255.0;
-        out[i++] = _clampToByte(b) / 255.0;
-      }
-    }
-    return out;
-  }
 
   Future<List<Detection>> detect(CameraImage cam) async {
     if (!_isInit || _interpreter == null) return [];
     try {
+      final inputData = IsolateImageInput(
+        width: cam.width,
+        height: cam.height,
+        inputSize: _inputSize,
+        yBuf: cam.planes[0].bytes,
+        uBuf: cam.planes[1].bytes,
+        vBuf: cam.planes[2].bytes,
+        yRow: cam.planes[0].bytesPerRow,
+        uvRow: cam.planes[1].bytesPerRow,
+        uvPx: cam.planes[1].bytesPerPixel ?? 1,
+      );
+
       final dynamic input;
       if (_isUint8) {
-        input = _toUint8(cam).reshape([1, _inputSize, _inputSize, 3]);
+        final uint8Data = await compute(_isolateToUint8, inputData);
+        input = uint8Data.reshape([1, _inputSize, _inputSize, 3]);
       } else {
-        input = _toFloat32(cam).reshape([1, _inputSize, _inputSize, 3]);
+        final float32Data = await compute(_isolateToFloat32, inputData);
+        input = float32Data.reshape([1, _inputSize, _inputSize, 3]);
       }
 
       if (_numOutputs >= 4) {
@@ -394,4 +291,102 @@ class DetectionService {
   }
 
   void dispose() => _interpreter?.close();
+}
+
+class IsolateImageInput {
+  final int width;
+  final int height;
+  final int inputSize;
+  final Uint8List yBuf;
+  final Uint8List uBuf;
+  final Uint8List vBuf;
+  final int yRow;
+  final int uvRow;
+  final int uvPx;
+
+  IsolateImageInput({
+    required this.width,
+    required this.height,
+    required this.inputSize,
+    required this.yBuf,
+    required this.uBuf,
+    required this.vBuf,
+    required this.yRow,
+    required this.uvRow,
+    required this.uvPx,
+  });
+}
+
+Uint8List _isolateToUint8(IsolateImageInput input) {
+  final xMap = Int32List(input.inputSize);
+  final yMap = Int32List(input.inputSize);
+  for (int px = 0; px < input.inputSize; px++) {
+    xMap[px] = px * input.width ~/ input.inputSize;
+  }
+  for (int py = 0; py < input.inputSize; py++) {
+    yMap[py] = py * input.height ~/ input.inputSize;
+  }
+
+  final out = Uint8List(input.inputSize * input.inputSize * 3);
+  int i = 0;
+  for (int py = 0; py < input.inputSize; py++) {
+    final sy = yMap[py];
+    final yBase = sy * input.yRow;
+    final uvBase = (sy >> 1) * input.uvRow;
+    for (int px = 0; px < input.inputSize; px++) {
+      final sx = xMap[px];
+      final yv = input.yBuf[yBase + sx];
+      final uvI = uvBase + (sx >> 1) * input.uvPx;
+      final u = input.uBuf[uvI] - 128;
+      final v = input.vBuf[uvI] - 128;
+
+      final c = yv - 16;
+      final y = c < 0 ? 0 : c;
+      final r = (298 * y + 409 * v + 128) >> 8;
+      final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
+      final b = (298 * y + 516 * u + 128) >> 8;
+
+      out[i++] = r.clamp(0, 255);
+      out[i++] = g.clamp(0, 255);
+      out[i++] = b.clamp(0, 255);
+    }
+  }
+  return out;
+}
+
+Float32List _isolateToFloat32(IsolateImageInput input) {
+  final xMap = Int32List(input.inputSize);
+  final yMap = Int32List(input.inputSize);
+  for (int px = 0; px < input.inputSize; px++) {
+    xMap[px] = px * input.width ~/ input.inputSize;
+  }
+  for (int py = 0; py < input.inputSize; py++) {
+    yMap[py] = py * input.height ~/ input.inputSize;
+  }
+
+  final out = Float32List(input.inputSize * input.inputSize * 3);
+  int i = 0;
+  for (int py = 0; py < input.inputSize; py++) {
+    final sy = yMap[py];
+    final yBase = sy * input.yRow;
+    final uvBase = (sy >> 1) * input.uvRow;
+    for (int px = 0; px < input.inputSize; px++) {
+      final sx = xMap[px];
+      final yv = input.yBuf[yBase + sx];
+      final uvI = uvBase + (sx >> 1) * input.uvPx;
+      final u = input.uBuf[uvI] - 128;
+      final v = input.vBuf[uvI] - 128;
+
+      final c = yv - 16;
+      final y = c < 0 ? 0 : c;
+      final r = (298 * y + 409 * v + 128) >> 8;
+      final g = (298 * y - 100 * u - 208 * v + 128) >> 8;
+      final b = (298 * y + 516 * u + 128) >> 8;
+
+      out[i++] = r.clamp(0, 255) / 255.0;
+      out[i++] = g.clamp(0, 255) / 255.0;
+      out[i++] = b.clamp(0, 255) / 255.0;
+    }
+  }
+  return out;
 }

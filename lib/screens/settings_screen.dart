@@ -284,7 +284,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   activeTrackColor: _teal,
                   inactiveTrackColor: _pillUnselected,
                   thumbColor: _teal,
-                  overlayColor: _teal.withOpacity(0.2),
+                  overlayColor: _teal.withValues(alpha: 0.2),
                   trackHeight: 4,
                 ),
                 child: Slider(
@@ -309,7 +309,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             spokenText: 'Vibration Switch',
             trailing: Switch(
               value: _vibration,
-              activeColor: _teal,
+              activeTrackColor: _teal.withValues(alpha: 0.5),
+              activeThumbColor: _teal,
               onChanged: (v) {
                 setState(() => _vibration = v);
                 _save('mizhi_vibration', v);
@@ -328,7 +329,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle:
                 _emergencyContact.isEmpty ? 'Not set' : _emergencyContact,
             buttonId: 'emergency_contact_row',
-            spokenText: 'Emergency Contact, currently ' + (_emergencyContact.isEmpty ? 'Not set' : _emergencyContact),
+            spokenText: 'Emergency Contact, currently ${_emergencyContact.isEmpty ? "Not set" : _emergencyContact}',
             trailing:
                 const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
             onTap: () async {
@@ -398,7 +399,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             spokenText: 'Dark Mode Switch, always on',
             trailing: Switch(
               value: true,
-              activeColor: _teal,
+              activeTrackColor: _teal.withValues(alpha: 0.5),
+              activeThumbColor: _teal,
               onChanged: null, // always on
             ),
           ),

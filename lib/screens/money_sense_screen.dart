@@ -38,7 +38,11 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
 
   String? _focusedButton;
 
-  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
+  Future<void> _handleButtonTap(
+    String buttonId,
+    String spokenText,
+    VoidCallback action,
+  ) async {
     if (_focusedButton == buttonId) {
       setState(() => _focusedButton = null);
       await _flutterTts.stop();
@@ -162,7 +166,10 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
     );
 
     try {
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
       if (!launched && mounted) {
         Navigator.pushNamed(context, '/emergency-contact');
       }
@@ -285,8 +292,17 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button' ? const Color(0xFF00D4AA) : Colors.white),
-            onPressed: () => _handleButtonTap('back_button', 'Go back', () => Navigator.pop(context)),
+            icon: Icon(
+              Icons.arrow_back,
+              color: _focusedButton == 'back_button'
+                  ? const Color(0xFF00D4AA)
+                  : Colors.white,
+            ),
+            onPressed: () => _handleButtonTap(
+              'back_button',
+              'Go back',
+              () => Navigator.pop(context),
+            ),
           ),
         ),
         body: const Center(
@@ -332,8 +348,17 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: Icon(Icons.arrow_back, color: _focusedButton == 'back_button_main' ? const Color(0xFF00D4AA) : Colors.white),
-                    onPressed: () => _handleButtonTap('back_button_main', 'Go back', _stopAndPop),
+                    icon: Icon(
+                      Icons.arrow_back,
+                      color: _focusedButton == 'back_button_main'
+                          ? const Color(0xFF00D4AA)
+                          : Colors.white,
+                    ),
+                    onPressed: () => _handleButtonTap(
+                      'back_button_main',
+                      'Go back',
+                      _stopAndPop,
+                    ),
                   ),
                   const Text(
                     "MONEY SENSE",
@@ -344,10 +369,19 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                     ),
                   ),
                   IconButton(
-                    icon: Icon(Icons.settings, color: _focusedButton == 'settings_button' ? const Color(0xFF00D4AA) : Colors.white),
-                    onPressed: () => _handleButtonTap('settings_button', 'Settings Menu', () {
-                      Navigator.pushNamed(context, '/settings');
-                    }),
+                    icon: Icon(
+                      Icons.settings,
+                      color: _focusedButton == 'settings_button'
+                          ? const Color(0xFF00D4AA)
+                          : Colors.white,
+                    ),
+                    onPressed: () => _handleButtonTap(
+                      'settings_button',
+                      'Settings Menu',
+                      () {
+                        Navigator.pushNamed(context, '/settings');
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -484,12 +518,15 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: () => _handleButtonTap('announce_again', 'Announce again', () {
-                _flutterTts.speak(_currencyAnnouncement(res.denomination));
-              }),
+              onPressed: () =>
+                  _handleButtonTap('announce_again', 'Announce again', () {
+                    _flutterTts.speak(_currencyAnnouncement(res.denomination));
+                  }),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00D4AA),
-                side: _focusedButton == 'announce_again' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
+                side: _focusedButton == 'announce_again'
+                    ? const BorderSide(color: Colors.white, width: 2)
+                    : BorderSide.none,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
