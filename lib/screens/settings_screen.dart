@@ -533,8 +533,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 activeTrackColor: _teal.withValues(alpha: 0.5),
                 activeThumbColor: _teal,
                 onChanged: (val) async {
-                  setState(() => _liveTracking = val);
-                  await _firebaseService.setEnabled(val);
+                  if (val) {
+                    final password = await _showPasswordPrompt();
+                    if (password != null && password.isNotEmpty) {
+                      setState(() => _liveTracking = true);
+                      await _firebaseService.setEnabled(true, password: password);
+                    } else {
+                      setState(() => _liveTracking = false);
+                    }
+                  } else {
+                    setState(() => _liveTracking = false);
+                    await _firebaseService.setEnabled(false);
+                  }
                 },
               ),
             ],
@@ -603,6 +613,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  Future<String?> _showPasswordPrompt() async {
+    String tempPass = '';
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: _cardColor,
+          title: const Text('Set Tracking Password', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: 'Enter a secure password',
+              hintStyle: TextStyle(color: Colors.white54),
+              enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: _teal)),
+              focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: _teal)),
+            ),
+            obscureText: false,
+            onChanged: (v) => tempPass = v,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, tempPass),
+              child: const Text('Confirm', style: TextStyle(color: _teal)),
+            ),
+          ],
+        );
+      },
     );
   }
 

@@ -9,11 +9,13 @@ class FirebaseLocationService {
   static const String keyEnabled = 'mizhi_live_tracking';
   static const String keyTrackId = 'mizhi_track_id';
   static const String keyContact = 'mizhi_emergency_contact';
+  static const String keyTrackingPass = 'mizhi_tracking_password';
 
   final FirebaseDatabase _db = FirebaseDatabase.instance;
   Timer? _timer;
   bool _isEnabled = false;
   String? _trackId;
+  String? _password;
 
   bool get isEnabled => _isEnabled;
   String? get trackId => _trackId;
@@ -25,6 +27,7 @@ class FirebaseLocationService {
     final prefs = await SharedPreferences.getInstance();
     _isEnabled = prefs.getBool(keyEnabled) ?? false;
     _trackId = prefs.getString(keyTrackId);
+    _password = prefs.getString(keyTrackingPass);
 
     // Generate a unique tracking ID if first time
     if (_trackId == null) {
@@ -32,15 +35,17 @@ class FirebaseLocationService {
       await prefs.setString(keyTrackId, _trackId!);
     }
 
-    if (_isEnabled) startTracking();
+    if (_isEnabled && _password != null) startTracking();
   }
 
-  Future<void> setEnabled(bool value) async {
+  Future<void> setEnabled(bool value, {String? password}) async {
     _isEnabled = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(keyEnabled, value);
 
-    if (value) {
+    if (value && password != null) {
+      _password = password;
+      await prefs.setString(keyTrackingPass, password);
       startTracking();
     } else {
       stopTracking();
@@ -91,6 +96,7 @@ class FirebaseLocationService {
         'time': '${now.hour}:${now.minute.toString().padLeft(2, '0')}',
         'status': 'active',
         'battery': 100, // can integrate battery_plus package later
+        'password': _password,
       });
 
       debugPrint('Location uploaded: ${pos.latitude}, ${pos.longitude}');
