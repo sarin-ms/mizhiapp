@@ -22,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _focusedButton;
   bool _isListening = false;
   bool _speechReady = false;
+  bool _allowListening = true;
   Timer? _restartListenTimer;
   static const Duration _restartListeningDelay = Duration(seconds: 2);
   DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -30,14 +31,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleButtonTap(
     String buttonId,
     String spokenText,
-    VoidCallback action,
+    Future<void> Function() action,
   ) async {
     if (_focusedButton == buttonId) {
       setState(() {
         _focusedButton = null;
       });
       await _flutterTts.stop();
-      action();
+      await action();
     } else {
       setState(() {
         _focusedButton = buttonId;
@@ -92,7 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _scheduleListeningRestart() {
-    if (!mounted || !_speechReady || _isListening) return;
+    if (!mounted || !_speechReady || _isListening || !_allowListening) return;
     if (_restartListenTimer?.isActive ?? false) return;
 
     _restartListenTimer = Timer(_restartListeningDelay, () {
@@ -102,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startListening() async {
-    if (!mounted || !_speechReady || _isListening) return;
+    if (!mounted || !_speechReady || _isListening || !_allowListening) return;
     _restartListenTimer?.cancel();
     await _speech.listen(
       listenFor: const Duration(seconds: 30),
@@ -113,6 +114,31 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() => _isListening = _speech.isListening);
     }
+  }
+
+  Future<void> _setListeningEnabled(bool enabled) async {
+    _allowListening = enabled;
+
+    if (!enabled) {
+      _restartListenTimer?.cancel();
+      if (_speech.isListening) {
+        await _speech.stop();
+      }
+      if (mounted) {
+        setState(() => _isListening = false);
+      }
+      return;
+    }
+
+    await _startListening();
+  }
+
+  Future<void> _navigateWithVoicePause(String routeName) async {
+    await _setListeningEnabled(false);
+    if (!mounted) return;
+    await Navigator.pushNamed(context, routeName);
+    if (!mounted) return;
+    await _setListeningEnabled(true);
   }
 
   Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
@@ -139,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _lastVoiceCommandAt = now;
       if (mounted) {
-        Navigator.pushNamed(context, '/money-sense');
+        await _navigateWithVoicePause('/money-sense');
       }
       return;
     }
@@ -150,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _lastVoiceCommandAt = now;
       if (mounted) {
-        Navigator.pushNamed(context, '/street-smart');
+        await _navigateWithVoicePause('/street-smart');
       }
       return;
     }
@@ -173,7 +199,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _flutterTts.stop();
       await _flutterTts.speak('No emergency contact saved. Please add one.');
       if (mounted) {
-        Navigator.pushNamed(context, '/emergency-contact');
+        await _navigateWithVoicePause('/emergency-contact');
       }
       return;
     }
@@ -193,11 +219,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (!launched) {
         if (!mounted) return;
-        Navigator.pushNamed(context, '/emergency-contact');
+        await _navigateWithVoicePause('/emergency-contact');
       }
     } catch (_) {
       if (!mounted) return;
-      Navigator.pushNamed(context, '/emergency-contact');
+      await _navigateWithVoicePause('/emergency-contact');
     }
   }
 
@@ -225,37 +251,40 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildModeCard({
     required Color bgColor,
     required Color borderColor,
-    required IconData icon,
-    required Color iconColor,
+    required String imagePath,
     required String title,
     required String subtitle,
     required Color subtitleColor,
     required VoidCallback onTap,
   }) {
-    // Mode card with subtle teal InkWell splash on tap, as requested
     return Material(
       color: Colors.transparent,
       child: Ink(
-        height: 160,
+        height: 120,
         width: double.infinity,
         decoration: BoxDecoration(
           color: bgColor,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: borderColor, width: 1.5),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: 2),
         ),
         child: InkWell(
-          borderRadius: BorderRadius.circular(24),
-          splashColor: const Color(0xFF00D4AA).withValues(alpha: 0.3),
-          highlightColor: const Color(0xFF00D4AA).withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(16),
+          splashColor: Colors.white.withValues(alpha: 0.2),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 28.0,
+              vertical: 16.0,
+            ),
             child: Row(
               children: [
-                // Left column
-                Icon(icon, color: iconColor, size: 48),
+                Image.asset(
+                  imagePath,
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.contain,
+                ),
                 const SizedBox(width: 24),
-                // Right column
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -265,15 +294,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         title,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 26,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        subtitle,
-                        style: TextStyle(color: subtitleColor, fontSize: 15),
-                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          style: TextStyle(color: subtitleColor, fontSize: 13),
+                        ),
                     ],
                   ),
                 ),
@@ -303,14 +332,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   top: 16.0,
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      "Mizhi",
-                      style: TextStyle(
-                        color: Color(0xFF00D4AA),
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Center(
+                        child: const Text(
+                          "MIZHI",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 40,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                     GestureDetector(
@@ -318,7 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _handleButtonTap(
                           'settings',
                           'Settings Menu',
-                          () => Navigator.pushNamed(context, '/settings'),
+                          () => _navigateWithVoicePause('/settings'),
                         );
                       },
                       child: Icon(
@@ -326,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: _focusedButton == 'settings'
                             ? const Color(0xFF00D4AA)
                             : Colors.white,
-                        size: 28,
+                        size: 36,
                       ),
                     ),
                   ],
@@ -344,110 +376,78 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         _getGreeting(),
                         style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 36,
+                          color: Color(0xFFD4AF37),
+                          fontSize: 32,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       const SizedBox(height: 8),
                       // Help text
                       const Text(
-                        "WHAT DO YOU NEED HELP WITH?",
-                        style: TextStyle(
-                          color: Color(0xFF00D4AA),
-                          fontSize: 18,
-                        ),
+                        "How can I help you today?",
+                        style: TextStyle(color: Colors.white, fontSize: 16),
                       ),
                       const SizedBox(height: 32),
 
                       // Street Smart
                       _buildModeCard(
-                        bgColor: const Color(0xFF0F4F45),
+                        bgColor: const Color(0xFF8B6914),
                         borderColor: _focusedButton == 'street_smart'
                             ? Colors.white
-                            : const Color(0xFF00D4AA),
-                        icon: Icons.directions_walk,
-                        iconColor: const Color(0xFF00D4AA),
+                            : const Color(0xFFD4AF37),
+                        imagePath: 'assets/images/Walking.png',
                         title: "STREET SMART",
-                        subtitle: "Detect vehicles & obstacles",
-                        subtitleColor: const Color(0xFF00D4AA),
+                        subtitle: "Detect obstacles",
+                        subtitleColor: Colors.white70,
                         onTap: () {
                           _handleButtonTap(
                             'street_smart',
                             'Street Smart mode',
-                            () => Navigator.pushNamed(context, '/street-smart'),
+                            () => _navigateWithVoicePause('/street-smart'),
                           );
                         },
                       ),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
 
                       // Money Sense
                       _buildModeCard(
-                        bgColor: const Color(0xFF2A1F5F),
+                        bgColor: const Color(0xFF8B6914),
                         borderColor: _focusedButton == 'money_sense'
                             ? Colors.white
-                            : const Color(0xFF6C3FBF),
-                        icon: Icons.currency_rupee,
-                        iconColor: const Color(0xFF9B6FE8),
+                            : const Color(0xFFD4AF37),
+                        imagePath: 'assets/images/Rupee.png',
                         title: "MONEY SENSE",
-                        subtitle: "Identify currency notes",
-                        subtitleColor: const Color(0xFF9B6FE8),
+                        subtitle: "Identify currency",
+                        subtitleColor: Colors.white70,
                         onTap: () {
                           _handleButtonTap(
                             'money_sense',
                             'Money sense mode',
-                            () => Navigator.pushNamed(context, '/money-sense'),
+                            () => _navigateWithVoicePause('/money-sense'),
                           );
                         },
                       ),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 12),
 
                       // Emergency Contact button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 64,
-                        child: ElevatedButton(
-                          onPressed: () {
-                            _handleButtonTap(
-                              'emergency_contact',
-                              'Emergency contact',
-                              () => Navigator.pushNamed(
-                                context,
-                                '/emergency-contact',
-                              ),
-                            );
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFFF4444),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            side: _focusedButton == 'emergency_contact'
-                                ? const BorderSide(
-                                    color: Colors.white,
-                                    width: 2,
-                                  )
-                                : BorderSide.none,
-                            elevation: 0,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
-                              Icon(Icons.phone, color: Colors.white, size: 24),
-                              SizedBox(width: 12),
-                              Text(
-                                "EMERGENCY CONTACT",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      _buildModeCard(
+                        bgColor: const Color(0xCC4A1A1A),
+                        borderColor: _focusedButton == 'emergency_contact'
+                            ? Colors.white
+                            : const Color(0xFFCC4444),
+                        imagePath: 'assets/images/Call.png',
+                        title: "EMERGENCY CONTACT",
+                        subtitle: "",
+                        subtitleColor: Colors.transparent,
+                        onTap: () {
+                          _handleButtonTap(
+                            'emergency_contact',
+                            'Emergency contact',
+                            () => _navigateWithVoicePause('/emergency-contact'),
+                          );
+                        },
                       ),
                       const SizedBox(height: 32),
                     ],

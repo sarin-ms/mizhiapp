@@ -538,12 +538,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     if (password != null && password.isNotEmpty) {
                       setState(() => _liveTracking = true);
                       await _firebaseService.setEnabled(true, password: password);
+                      await _tts.speak('Live location tracking enabled');
                     } else {
                       setState(() => _liveTracking = false);
                     }
                   } else {
                     setState(() => _liveTracking = false);
                     await _firebaseService.setEnabled(false);
+                    await _tts.speak('Live location tracking disabled');
                   }
                 },
               ),

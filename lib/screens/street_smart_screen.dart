@@ -3,11 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:vibration/vibration.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:mizhi/services/detection_service.dart';
 import 'package:mizhi/utils/settings_helper.dart';
 
@@ -45,12 +43,6 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   static const Duration _sameAlertSpeakCooldown = Duration(seconds: 7);
   String _lastSpokenAlert = '';
   DateTime _lastSpokenAlertAt = DateTime.fromMillisecondsSinceEpoch(0);
-  bool _isListening = false;
-  bool _speechReady = false;
-  Timer? _restartListenTimer;
-  static const Duration _restartListeningDelay = Duration(seconds: 2);
-  DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const Duration _voiceCommandCooldown = Duration(seconds: 4);
 
   String? _focusedButton;
 
@@ -77,6 +69,11 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
   bool _voiceEnabled = true;
   bool _vibrationEnabled = true;
+  bool _flashlightEnabled = false;
+  bool _speechReady = false;
+  bool _isListening = false;
+  Timer? _restartListenTimer;
+  static const Duration _restartListeningDelay = Duration(seconds: 2);
 
   // Store preview dimensions for correct box scaling
   double _previewW = 1;
@@ -91,130 +88,6 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     super.initState();
     _initAnimations();
     _initServices();
-    _initSpeech();
-  }
-
-  Future<void> _initSpeech() async {
-    _speechReady = await _speech.initialize(
-      onStatus: (status) {
-        if (!mounted) return;
-        if (status == 'done' || status == 'notListening') {
-          _isListening = false;
-          _scheduleListeningRestart();
-        }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        _isListening = false;
-        _scheduleListeningRestart();
-      },
-    );
-
-    if (_speechReady) {
-      _startListening();
-    }
-  }
-
-  void _scheduleListeningRestart() {
-    if (!mounted || !_speechReady || _isListening) return;
-    if (_restartListenTimer?.isActive ?? false) return;
-
-    _restartListenTimer = Timer(_restartListeningDelay, () {
-      if (!mounted) return;
-      _startListening();
-    });
-  }
-
-  Future<void> _startListening() async {
-    if (!mounted || !_speechReady || _isListening) return;
-    _restartListenTimer?.cancel();
-    await _speech.listen(
-      listenFor: const Duration(seconds: 90),
-      pauseFor: const Duration(seconds: 12),
-      listenOptions: SpeechListenOptions(partialResults: false),
-      onResult: _onSpeechResult,
-    );
-    _isListening = _speech.isListening;
-  }
-
-  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
-    final spoken = result.recognizedWords.trim().toLowerCase();
-    if (spoken.isEmpty) return;
-
-    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
-    final isMoneyCommand =
-        normalized.contains('open money') ||
-        normalized.contains('money mode') ||
-        normalized.contains('money sense') ||
-        (normalized.contains('money') &&
-            (normalized.contains('sense') || normalized.contains('cents')));
-    final isStreetCommand =
-        normalized.contains('open street') ||
-        normalized.contains('street mode') ||
-        normalized.contains('street smart') ||
-        (normalized.contains('street') && normalized.contains('smart'));
-
-    final now = DateTime.now();
-
-    if (isMoneyCommand) {
-      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
-        return;
-      }
-      _lastVoiceCommandAt = now;
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/money-sense');
-      }
-      return;
-    }
-
-    if (isStreetCommand) {
-      return;
-    }
-
-    if (spoken.contains('help me call') || spoken.contains('help me, call')) {
-      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
-        return;
-      }
-      _lastVoiceCommandAt = now;
-      await _triggerEmergencyCall();
-    }
-  }
-
-  Future<void> _triggerEmergencyCall() async {
-    final prefs = await SharedPreferences.getInstance();
-    final name = prefs.getString('mizhi_emergency_contact')?.trim() ?? '';
-    final rawPhone = prefs.getString('mizhi_emergency_phone')?.trim() ?? '';
-
-    if (rawPhone.isEmpty) {
-      await _flutterTts.stop();
-      await _flutterTts.speak('No emergency contact saved. Please add one.');
-      if (mounted) {
-        Navigator.pushNamed(context, '/emergency-contact');
-      }
-      return;
-    }
-
-    final normalizedPhone = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
-    final uri = Uri(scheme: 'tel', path: normalizedPhone);
-
-    await _flutterTts.stop();
-    await _flutterTts.speak(
-      name.isNotEmpty ? 'Calling $name' : 'Calling emergency contact',
-    );
-
-    try {
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched && mounted) {
-        Navigator.pushNamed(context, '/emergency-contact');
-      }
-    } catch (_) {
-      if (mounted) {
-        Navigator.pushNamed(context, '/emergency-contact');
-      }
-    }
   }
 
   void _initAnimations() {
@@ -237,6 +110,26 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     await applyTtsSettings(_flutterTts);
     _vibrationEnabled = await loadVibrationPref();
     _hasVibrator = await Vibration.hasVibrator();
+
+    // Initialize speech recognition for flashlight commands
+    _speechReady = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        if (status == 'done' || status == 'notListening') {
+          setState(() => _isListening = false);
+          _scheduleListeningRestart();
+        }
+      },
+      onError: (_) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        _scheduleListeningRestart();
+      },
+    );
+
+    if (_speechReady) {
+      _startListening();
+    }
 
     try {
       final cameras = await availableCameras();
@@ -420,6 +313,55 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     super.dispose();
   }
 
+  Future<void> _startListening() async {
+    if (!mounted || !_speechReady || _isListening) return;
+    _restartListenTimer?.cancel();
+    await _speech.listen(
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 4),
+      listenOptions: SpeechListenOptions(partialResults: true),
+      onResult: _onSpeechResult,
+    );
+    if (mounted) {
+      setState(() => _isListening = _speech.isListening);
+    }
+  }
+
+  void _scheduleListeningRestart() {
+    if (!mounted || !_speechReady || _isListening) return;
+    if (_restartListenTimer?.isActive ?? false) return;
+
+    _restartListenTimer = Timer(_restartListeningDelay, () {
+      if (!mounted) return;
+      _startListening();
+    });
+  }
+
+  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
+    final spoken = result.recognizedWords.trim().toLowerCase();
+    if (spoken.isEmpty) return;
+
+    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
+
+    if (normalized.contains('flash on') || normalized.contains('flashlight on')) {
+      if (!_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
+        await _cameraController!.setFlashMode(FlashMode.torch);
+        setState(() => _flashlightEnabled = true);
+        await _flutterTts.speak('Flashlight on');
+      }
+      return;
+    }
+
+    if (normalized.contains('flash off') || normalized.contains('flashlight off')) {
+      if (_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
+        await _cameraController!.setFlashMode(FlashMode.off);
+        setState(() => _flashlightEnabled = false);
+        await _flutterTts.speak('Flashlight off');
+      }
+      return;
+    }
+  }
+
   Widget _buildPill({
     required bool isOn,
     required String labelOn,
@@ -444,7 +386,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
         child: Text(
           isOn ? labelOn : labelOff,
           style: TextStyle(
-            color: isOn && colorOn == const Color(0xFF00D4AA)
+            color: isOn && (colorOn == const Color(0xFF8B6914) || colorOn == const Color(0xFFD4AF37))
                 ? Colors.black
                 : Colors.white,
             fontWeight: FontWeight.bold,
@@ -538,7 +480,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                 left: 8,
                 right: 8,
               ),
-              color: const Color(0x99000000),
+              color: const Color(0xFF0A0E21),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -546,7 +488,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                     icon: Icon(
                       Icons.arrow_back,
                       color: _focusedButton == 'back_button'
-                          ? const Color(0xFF00D4AA)
+                          ? const Color(0xFFD4AF37)
                           : Colors.white,
                     ),
                     onPressed: () =>
@@ -597,17 +539,17 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: const Color(0xFF00D4AA).withValues(alpha: 0.2),
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
                       ),
                       child: Container(
                         padding: const EdgeInsets.all(14),
                         decoration: const BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Color(0xFF00D4AA),
+                          color: Color(0xFFD4AF37),
                         ),
                         child: const Icon(
-                          Icons.mic,
-                          color: Colors.white,
+                          Icons.remove_red_eye,
+                          color: Colors.black,
                           size: 26,
                         ),
                       ),
@@ -617,7 +559,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                   FadeTransition(
                     opacity: _opacityAnimation,
                     child: const Text(
-                      'LISTENING...',
+                      'SCANNING...',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -633,7 +575,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                         isOn: _voiceEnabled,
                         labelOn: 'VOICE: ON',
                         labelOff: 'VOICE: OFF',
-                        colorOn: const Color(0xFF00D4AA),
+                        colorOn: const Color(0xFF8B6914),
                         buttonId: 'voice_toggle_pill',
                         spokenText:
                             'Toggle Voice, currently ${_voiceEnabled ? "On" : "Off"}',
@@ -652,6 +594,24 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                         onTap: () => setState(
                           () => _vibrationEnabled = !_vibrationEnabled,
                         ),
+                      ),
+                      const SizedBox(width: 12),
+                      _buildPill(
+                        isOn: _flashlightEnabled,
+                        labelOn: 'FLASH: ON',
+                        labelOff: 'FLASH: OFF',
+                        colorOn: const Color(0xFFFFD700),
+                        buttonId: 'flashlight_toggle_pill',
+                        spokenText:
+                            'Toggle Flashlight, currently ${_flashlightEnabled ? "On" : "Off"}',
+                        onTap: () async {
+                          if (_cameraController != null && _cameraController!.value.isInitialized) {
+                            await _cameraController!.setFlashMode(
+                              _flashlightEnabled ? FlashMode.off : FlashMode.torch,
+                            );
+                            setState(() => _flashlightEnabled = !_flashlightEnabled);
+                          }
+                        },
                       ),
                     ],
                   ),
@@ -687,7 +647,7 @@ class BoundingBoxPainter extends CustomPainter {
     final scaleY = screenH / camW;
 
     final boxPaint = Paint()
-      ..color = const Color(0xFF00D4AA)
+      ..color = const Color(0xFFD4AF37)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
 

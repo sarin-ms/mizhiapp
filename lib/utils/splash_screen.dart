@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:mizhi/utils/settings_helper.dart';
-import 'dart:async';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -12,211 +9,152 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _opacityAnimation;
-  Timer? _timer;
+    with TickerProviderStateMixin {
+  // ── frame list — add or remove based on how many images you have ──
+  final List<String> _frames = [
+    'assets/images/eye_closed.png',
+    'assets/images/eye_half.png', // delete this line if you only have 2 images
+    'assets/images/eye_open.png',
+  ];
 
-  final FlutterTts _flutterTts = FlutterTts();
-  String? _focusedButton;
-
-  Future<void> _handleButtonTap(String buttonId, String spokenText, VoidCallback action) async {
-    // If tapped once, cancel auto-navigation timer as user is interacting manually
-    _timer?.cancel();
-    if (_focusedButton == buttonId) {
-      setState(() => _focusedButton = null);
-      await _flutterTts.stop();
-      action();
-    } else {
-      setState(() => _focusedButton = buttonId);
-      await _flutterTts.stop();
-      await _flutterTts.speak(spokenText);
-      Future.delayed(const Duration(seconds: 5), () {
-        if (mounted && _focusedButton == buttonId) {
-          setState(() => _focusedButton = null);
-        }
-      });
-    }
-  }
+  int _currentFrame = 0;
+  bool _showText = false;
 
   @override
   void initState() {
     super.initState();
-    applyTtsSettings(_flutterTts);
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..repeat(reverse: true);
-
-    _opacityAnimation = Tween<double>(begin: 0.6, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
-
-    // Auto-navigate after 3 seconds — skip permissions if already granted
-    _timer = Timer(const Duration(seconds: 3), () {
-      _navigateNext();
-    });
+    _playAnimation();
   }
 
   Future<bool> _allPermissionsGranted() async {
-    final camera = await Permission.camera.isGranted;
-    final mic = await Permission.microphone.isGranted;
-    final contacts = await Permission.contacts.isGranted;
-    return camera && mic && contacts;
+    final cameraStatus = await Permission.camera.status;
+    final micStatus = await Permission.microphone.status;
+    final contactsStatus = await Permission.contacts.status;
+    final allGranted =
+        cameraStatus.isGranted &&
+        micStatus.isGranted &&
+        contactsStatus.isGranted;
+
+    return allGranted;
   }
 
-  Future<void> _navigateNext() async {
-    if (!mounted) return;
-    _timer?.cancel();
+  Future<void> _requestPermissionsIfNeeded() async {
     final allGranted = await _allPermissionsGranted();
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(
-      context,
-      allGranted ? '/home' : '/permissions',
-    );
+    if (!allGranted) {
+      await Future.wait([
+        Permission.camera.request(),
+        Permission.microphone.request(),
+        Permission.contacts.request(),
+      ]);
+    }
   }
 
-  @override
-  void dispose() {
-    _flutterTts.stop();
-    _timer?.cancel();
-    _animationController.dispose();
-    super.dispose();
+  Future<void> _playAnimation() async {
+    // Request permissions immediately (silently if already granted)
+    await _requestPermissionsIfNeeded();
+
+    // Short pause before starting
+    await Future.delayed(const Duration(milliseconds: 400));
+
+    // Play frames forward — eye opening
+    for (int i = 0; i < _frames.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (mounted) setState(() => _currentFrame = i);
+    }
+
+    // Hold open
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    // Play frames backward — eye closing
+    for (int i = _frames.length - 2; i >= 0; i--) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) setState(() => _currentFrame = i);
+    }
+
+    // Hold closed briefly
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Open again — final reveal
+    for (int i = 0; i < _frames.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) setState(() => _currentFrame = i);
+    }
+
+    // Show text
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (mounted) setState(() => _showText = true);
+
+    // Auto navigate after 1 second
+    await Future.delayed(const Duration(seconds: 1));
+    if (mounted) {
+      final allPermissionsGranted = await _allPermissionsGranted();
+      final route = allPermissionsGranted ? '/home' : '/permissions';
+      Navigator.pushReplacementNamed(context, route);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0E21),
+      backgroundColor: Colors.white,
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Animated teal glowing eye icon
-                FadeTransition(
-                  opacity: _opacityAnimation,
-                  child: Container(
-                    width: 130, // Big enough to fit 64px icon and give padding
-                    height: 130,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF161A2D), // Slight dark outer ring fill like in the image
-                      border: Border.all(
-                        color: const Color(0xFF00D4AA),
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF00D4AA).withValues(alpha: 0.15),
-                          blurRadius: 30,
-                          spreadRadius: 5,
-                        ),
-                      ],
-                    ),
-                    alignment: Alignment.center,
-                    child: const Icon(
-                      Icons.visibility,
-                      color: Color(0xFF00D4AA),
-                      size: 64,
-                    ),
-                  ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Spacer(),
+
+            // ── Eye animation ──
+            Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 80),
+                child: Image.asset(
+                  _frames[_currentFrame],
+                  key: ValueKey(_currentFrame),
+                  width: 180,
+                  height: 180,
+                  fit: BoxFit.contain,
                 ),
-                const SizedBox(height: 24),
-                // Text MIZHI
-                const Text(
-                  "MIZHI",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 48,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 4.0,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Text Your AI eyes. Always.
-                const Text(
-                  "Your AI eyes. Always.",
-                  style: TextStyle(
-                    color: Color(0xFF00D4AA),
-                    fontSize: 18,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-                const SizedBox(height: 48),
-                // Full width teal button
-                SizedBox(
-                  width: double.infinity,
-                  height: 64,
-                  child: ElevatedButton(
-                    onPressed: () => _handleButtonTap('get_started', 'Get Started', _navigateNext),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00D4AA),
-                      side: _focusedButton == 'get_started' ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      "GET STARTED →",
+              ),
+            ),
+
+            const SizedBox(height: 32),
+
+            // ── App name ──
+            AnimatedOpacity(
+              opacity: _showText ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 600),
+              child: AnimatedSlide(
+                offset: _showText ? Offset.zero : const Offset(0, 0.3),
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeOut,
+                child: const Column(
+                  children: [
+                    Text(
+                      'MIZHI',
                       style: TextStyle(
                         color: Colors.black,
-                        fontSize: 18,
+                        fontSize: 48,
                         fontWeight: FontWeight.bold,
+                        letterSpacing: 6,
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                // Footer
-                const Text(
-                  "MADE FOR 15 MILLION VISUALLY\nIMPAIRED INDIANS",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                    letterSpacing: 1.0,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Tricolour dashes from image
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 16,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF9933), // Saffron
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Container(
-                      width: 16,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Container(
-                      width: 16,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF138808), // Green
-                        borderRadius: BorderRadius.circular(2),
+                    SizedBox(height: 8),
+                    Text(
+                      'Your AI eyes. Always.',
+                      style: TextStyle(
+                        color: Colors.black54,
+                        fontSize: 16,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 1,
                       ),
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
+
+            const Spacer(),
+          ],
         ),
       ),
     );
