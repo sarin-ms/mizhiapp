@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -45,6 +47,8 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   DateTime _lastSpokenAlertAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isListening = false;
   bool _speechReady = false;
+  Timer? _restartListenTimer;
+  static const Duration _restartListeningDelay = Duration(seconds: 2);
   DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const Duration _voiceCommandCooldown = Duration(seconds: 4);
 
@@ -96,13 +100,13 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
         if (!mounted) return;
         if (status == 'done' || status == 'notListening') {
           _isListening = false;
-          _startListening();
+          _scheduleListeningRestart();
         }
       },
       onError: (_) {
         if (!mounted) return;
         _isListening = false;
-        Future<void>.delayed(const Duration(seconds: 2), _startListening);
+        _scheduleListeningRestart();
       },
     );
 
@@ -111,15 +115,26 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     }
   }
 
+  void _scheduleListeningRestart() {
+    if (!mounted || !_speechReady || _isListening) return;
+    if (_restartListenTimer?.isActive ?? false) return;
+
+    _restartListenTimer = Timer(_restartListeningDelay, () {
+      if (!mounted) return;
+      _startListening();
+    });
+  }
+
   Future<void> _startListening() async {
     if (!mounted || !_speechReady || _isListening) return;
+    _restartListenTimer?.cancel();
     await _speech.listen(
       listenFor: const Duration(seconds: 90),
       pauseFor: const Duration(seconds: 12),
       listenOptions: SpeechListenOptions(partialResults: false),
       onResult: _onSpeechResult,
     );
-    _isListening = true;
+    _isListening = _speech.isListening;
   }
 
   Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
@@ -388,6 +403,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _restartListenTimer?.cancel();
     if (_speech.isListening) {
       _speech.stop();
     }

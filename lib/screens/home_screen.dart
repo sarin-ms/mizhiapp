@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +22,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _focusedButton;
   bool _isListening = false;
   bool _speechReady = false;
+  Timer? _restartListenTimer;
+  static const Duration _restartListeningDelay = Duration(seconds: 2);
   DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const Duration _voiceCommandCooldown = Duration(seconds: 4);
 
@@ -72,14 +76,13 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted) return;
         if (status == 'done' || status == 'notListening') {
           setState(() => _isListening = false);
-          _startListening();
+          _scheduleListeningRestart();
         }
       },
       onError: (_) {
         if (!mounted) return;
         setState(() => _isListening = false);
-        // Retry so voice command remains available even after transient errors.
-        Future<void>.delayed(const Duration(seconds: 2), _startListening);
+        _scheduleListeningRestart();
       },
     );
 
@@ -88,8 +91,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _scheduleListeningRestart() {
+    if (!mounted || !_speechReady || _isListening) return;
+    if (_restartListenTimer?.isActive ?? false) return;
+
+    _restartListenTimer = Timer(_restartListeningDelay, () {
+      if (!mounted) return;
+      _startListening();
+    });
+  }
+
   Future<void> _startListening() async {
     if (!mounted || !_speechReady || _isListening) return;
+    _restartListenTimer?.cancel();
     await _speech.listen(
       listenFor: const Duration(seconds: 30),
       pauseFor: const Duration(seconds: 4),
@@ -97,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onResult: _onSpeechResult,
     );
     if (mounted) {
-      setState(() => _isListening = true);
+      setState(() => _isListening = _speech.isListening);
     }
   }
 
@@ -189,6 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _restartListenTimer?.cancel();
     if (_speech.isListening) {
       _speech.stop();
     }
