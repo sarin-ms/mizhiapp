@@ -36,7 +36,6 @@ AI is the foundation of Mizhi's accessibility features:
 
 ## Proof of Google AI Usage
 
-_(Note: Please ensure you drop your proof screenshots in the `/proof` directory)_
 
 ![AI Proof](./assets/ide.jpeg)
 ![Stitch AI](./assets/stitch.jpeg)
@@ -45,7 +44,6 @@ _(Note: Please ensure you drop your proof screenshots in the `/proof` directory)
 
 ## Screenshots
 
-_(Note: Please ensure your application screenshots are placed in the `/assets` directory)_
 
 ![Screenshot1](./assets/Screenshot_mizhi(1).jpeg)  
 ![Screenshot2](./assets/Screenshot_mizhi(2).jpeg)
@@ -57,7 +55,6 @@ _(Note: Please ensure your application screenshots are placed in the `/assets` d
 
 ## Demo Video
 
-Upload your demo video to Google Drive and paste the shareable link here (max 3 minutes).
 [Watch Demo](https://drive.google.com/file/d/1-6D6lfRF0qBgdeorD8Up-osKMurLOk-x/view?usp=drivesdk)
 
 ---
