@@ -140,7 +140,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
       _cameraController = CameraController(
         backCamera,
-        ResolutionPreset.low,
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -343,8 +343,11 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
     final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
 
-    if (normalized.contains('flash on') || normalized.contains('flashlight on')) {
-      if (!_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
+    if (normalized.contains('flash on') ||
+        normalized.contains('flashlight on')) {
+      if (!_flashlightEnabled &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
         await _cameraController!.setFlashMode(FlashMode.torch);
         setState(() => _flashlightEnabled = true);
         await _flutterTts.speak('Flashlight on');
@@ -352,8 +355,11 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
       return;
     }
 
-    if (normalized.contains('flash off') || normalized.contains('flashlight off')) {
-      if (_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
+    if (normalized.contains('flash off') ||
+        normalized.contains('flashlight off')) {
+      if (_flashlightEnabled &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
         await _cameraController!.setFlashMode(FlashMode.off);
         setState(() => _flashlightEnabled = false);
         await _flutterTts.speak('Flashlight off');
@@ -386,7 +392,10 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
         child: Text(
           isOn ? labelOn : labelOff,
           style: TextStyle(
-            color: isOn && (colorOn == const Color(0xFF8B6914) || colorOn == const Color(0xFFD4AF37))
+            color:
+                isOn &&
+                    (colorOn == const Color(0xFF8B6914) ||
+                        colorOn == const Color(0xFFD4AF37))
                 ? Colors.black
                 : Colors.white,
             fontWeight: FontWeight.bold,
@@ -605,11 +614,16 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                         spokenText:
                             'Toggle Flashlight, currently ${_flashlightEnabled ? "On" : "Off"}',
                         onTap: () async {
-                          if (_cameraController != null && _cameraController!.value.isInitialized) {
+                          if (_cameraController != null &&
+                              _cameraController!.value.isInitialized) {
                             await _cameraController!.setFlashMode(
-                              _flashlightEnabled ? FlashMode.off : FlashMode.torch,
+                              _flashlightEnabled
+                                  ? FlashMode.off
+                                  : FlashMode.torch,
                             );
-                            setState(() => _flashlightEnabled = !_flashlightEnabled);
+                            setState(
+                              () => _flashlightEnabled = !_flashlightEnabled,
+                            );
                           }
                         },
                       ),
