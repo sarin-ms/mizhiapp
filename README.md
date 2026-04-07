@@ -18,17 +18,19 @@ Mizhi is an AI-powered mobile application built in Flutter designed strictly to 
 
 ### Tools / Models Used
 
-- **TensorFlow Lite (`tflite_flutter`)**
-- **Custom TFLite Object Detection Model (`mizhi_street_smart.tflite`)** (SSD/RetinaNet architecture optimized for edge ML)
-- **Custom TFLite Image Classification Model (`mizhi_money_sense.tflite`)**
-- **Google Gemini 3.1 Pro (High)**
+- **Antigravity IDE**
+- **Stitch AI**
+- **Firebase for backend GPS**
+- **Google TTS**
 
 ### How Google AI Was Used
 
 AI is the foundation of Mizhi's accessibility features:
 
-1. **On-Device Machine Learning (TensorFlow Lite):** Real-time image buffers from the device's camera are continuously processed through our custom TensorFlow Lite models directly on the edge. This provides rapid, offline inferences for object detection and currency classification—critical for visually impaired users who cannot wait for cloud latency.
-2. **Development Assistance with Gemini:** Google Gemini 3.1 Pro was used extensively during the hackathon to architect and debug the complex Flutter pipeline. Gemini AI assisted with migrating the RetinaNet object detection workflows, parsing custom anchor boxes, writing the complex cross-platform Image Buffer conversions (from YUV420 to Uint8/Float32), and resolving integration bugs.
+1. **Antigravity IDE:** Used as a core development environment to accelerate implementation and integration across the app modules.
+2. **Stitch AI:** Used to support AI-assisted development workflows and improve feature iteration speed.
+3. **Firebase for backend GPS:** Used to handle backend connectivity for location-based emergency/SOS GPS sharing.
+4. **Google TTS:** Used to provide clear voice guidance and spoken feedback for navigation and currency detection.
 
 ---
 
