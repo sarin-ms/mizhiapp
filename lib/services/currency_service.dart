@@ -1,190 +1,67 @@
-import 'dart:typed_data';
-import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:mizhi/services/currency_pipeline.dart';
+import 'package:mizhi/services/currency_worker.dart';
+import 'package:mizhi/services/detection_pipeline.dart';
 
-class CurrencyResult {
-  final String denomination;
-  final double confidence;
-
-  CurrencyResult({required this.denomination, required this.confidence});
-}
-
-const Map<String, String> denominationNames = {
-  '10': 'Ten Rupees',
-  '20': 'Twenty Rupees',
-  '50': 'Fifty Rupees',
-  '100': 'One Hundred Rupees',
-  '200': 'Two Hundred Rupees',
-  '500': 'Five Hundred Rupees',
-  '2000': 'Two Thousand Rupees',
-};
+export 'package:mizhi/services/currency_pipeline.dart' show CurrencyResult;
 
 class CurrencyService {
-  Interpreter? _interpreter;
-  List<String> _labels = [];
-  bool _isInit = false;
-  bool get isInit => _isInit;
-
-  static const int inputSize = 224;
-  static const double _minConfidence = 0.85;
-  static const double _minTopGap = 0.18;
-  static const int _requiredStableFrames = 3;
-
-  String? _candidateLabel;
-  int _candidateFrames = 0;
+  CurrencyWorker? _worker;
+  bool _disposed = false;
+  bool get isInit => _worker != null;
 
   Future<void> init() async {
     try {
-      debugPrint('CurrencyService: starting init...');
-
-      final options = InterpreterOptions()..threads = 2;
-      _interpreter = await Interpreter.fromAsset(
-        'assets/models/mizhi_money_sense.tflite',
-        options: options,
-      );
-      debugPrint('CurrencyService: model loaded OK');
-
       final raw = await rootBundle.loadString(
         'assets/models/currency_labels.txt',
       );
-      debugPrint('CurrencyService: raw labels = "$raw"');
-
-      _labels = raw
+      final labels = raw
           .split(RegExp(r'[\r\n]+'))
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
-          .toList();
-
-      debugPrint(
-        'CurrencyService: labels loaded: ${_labels.length} → $_labels',
+          .toList(growable: false);
+      final model = await rootBundle.load(
+        'assets/models/mizhi_money_sense.tflite',
       );
-
-      final inShape = _interpreter!.getInputTensor(0).shape;
-      final outShape = _interpreter!.getOutputTensor(0).shape;
-      debugPrint('CurrencyService: input=$inShape output=$outShape');
-
-      _isInit = true;
-      debugPrint('CurrencyService: init complete!');
-    } catch (e, stack) {
-      debugPrint('CurrencyService INIT FAILED: $e');
-      debugPrint('Stack: $stack');
-    }
-  }
-
-  // Convert YUV420 CameraImage to Uint8List [1, 224, 224, 3] (raw 0-255 RGB)
-  // Model expects uint8 input, NOT float32
-  Uint8List _toUint8(CameraImage img) {
-    final yBuf = img.planes[0].bytes;
-    final uBuf = img.planes[1].bytes;
-    final vBuf = img.planes[2].bytes;
-    final yRow = img.planes[0].bytesPerRow;
-    final uvRow = img.planes[1].bytesPerRow;
-    final uvPx = img.planes[1].bytesPerPixel ?? 1;
-    final w = img.width;
-    final h = img.height;
-
-    final out = Uint8List(inputSize * inputSize * 3);
-    int i = 0;
-
-    for (int py = 0; py < inputSize; py++) {
-      final sy = py * h ~/ inputSize;
-      for (int px = 0; px < inputSize; px++) {
-        final sx = px * w ~/ inputSize;
-
-        final yv = yBuf[sy * yRow + sx];
-        final uvI = (sy ~/ 2) * uvRow + (sx ~/ 2) * uvPx;
-        final u = uBuf[uvI] - 128;
-        final v = vBuf[uvI] - 128;
-
-        out[i++] = (yv + 1.402 * v).clamp(0, 255).toInt(); // R
-        out[i++] = (yv - 0.34414 * u - 0.71414 * v).clamp(0, 255).toInt(); // G
-        out[i++] = (yv + 1.772 * u).clamp(0, 255).toInt(); // B
-      }
-    }
-    return out;
-  }
-
-  Future<CurrencyResult?> classify(CameraImage cam) async {
-    if (!_isInit || _interpreter == null) return null;
-
-    try {
-      final flat = _toUint8(cam);
-      final input = flat.reshape([1, inputSize, inputSize, 3]);
-
-      // Detect output tensor type and allocate accordingly
-      final outTensor = _interpreter!.getOutputTensor(0);
-      final outShape = outTensor.shape; // e.g. [1, 7]
-      final numClasses = outShape.last;
-
-      // Allocate output matching tensor type
-      dynamic output;
-      if (outTensor.type.toString().contains('uint8')) {
-        output = List.generate(1, (_) => List.filled(numClasses, 0));
-      } else {
-        output = List.generate(1, (_) => List.filled(numClasses, 0.0));
-      }
-
-      _interpreter!.run(input, output);
-
-      // Normalize output to doubles regardless of type
-      List<double> probs;
-      if (outTensor.type.toString().contains('uint8')) {
-        probs = (output[0] as List<int>).map((e) => e / 255.0).toList();
-      } else {
-        probs = List<double>.from(output[0]);
-      }
-
-      double maxProb = 0;
-      int maxIdx = 0;
-      double secondProb = 0;
-      for (int i = 0; i < probs.length; i++) {
-        if (probs[i] > maxProb) {
-          secondProb = maxProb;
-          maxProb = probs[i];
-          maxIdx = i;
-        } else if (probs[i] > secondProb) {
-          secondProb = probs[i];
-        }
-      }
-
-      debugPrint('=== CURRENCY DEBUG ===');
-      debugPrint('Probs: ${probs.map((p) => p.toStringAsFixed(3)).toList()}');
-      debugPrint(
-        'Max: $maxProb @ idx $maxIdx = ${maxIdx < _labels.length ? _labels[maxIdx] : "?"}',
+      if (_disposed) return;
+      final worker = await CurrencyWorker.start(
+        model.buffer.asUint8List(model.offsetInBytes, model.lengthInBytes),
+        labels,
       );
-      debugPrint('=====================');
-
-      if (maxIdx < 0 || maxIdx >= _labels.length) return null;
-      final label = _labels[maxIdx];
-      final topGap = maxProb - secondProb;
-
-      // Since the model has only denomination classes, require a strong and
-      // stable winner before treating it as a valid note.
-      if (maxProb < _minConfidence || topGap < _minTopGap) {
-        _candidateLabel = null;
-        _candidateFrames = 0;
-        return null;
-      }
-
-      if (_candidateLabel == label) {
-        _candidateFrames++;
+      if (_disposed) {
+        await worker.close();
       } else {
-        _candidateLabel = label;
-        _candidateFrames = 1;
+        _worker = worker;
       }
-
-      if (_candidateFrames < _requiredStableFrames) return null;
-
-      return CurrencyResult(denomination: label, confidence: maxProb);
-    } catch (e) {
-      debugPrint('classify() error: $e');
-      return null;
+    } catch (e, s) {
+      debugPrint('Currency model initialization failed: $e\n$s');
     }
   }
 
-  void dispose() {
-    _interpreter?.close();
+  Future<CurrencyResult?> classify(
+    CameraImage image, {
+    int rotationDegrees = 0,
+  }) async {
+    final worker = _worker;
+    if (worker == null) return null;
+    final input = DetectionImageInput.fromCameraImage(
+      image,
+      rotationDegrees: rotationDegrees,
+      inputWidth: worker.inputWidth,
+      inputHeight: worker.inputHeight,
+    );
+    final result = await worker.classify(input);
+    return identical(worker, _worker) ? result : null;
+  }
+
+  void reset() => _worker?.reset();
+
+  Future<void> dispose() async {
+    _disposed = true;
+    final worker = _worker;
+    _worker = null;
+    await worker?.close();
   }
 }

@@ -1,13 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speech_to_text/speech_to_text.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
+import 'package:mizhi/services/app_voice_service.dart';
+import 'package:mizhi/services/app_audio.dart';
+
 import 'package:mizhi/utils/settings_helper.dart';
-import 'package:mizhi/utils/localization.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,17 +15,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final FlutterTts _flutterTts = FlutterTts();
-  final SpeechToText _speech = SpeechToText();
+  final AppAudio _flutterTts = AppAudio.instance;
   String? _focusedButton;
-  bool _isListening = false;
-  bool _speechReady = false;
-  bool _allowListening = true;
-  Timer? _restartListenTimer;
-  static const Duration _restartListeningDelay = Duration(seconds: 2);
-  DateTime _lastVoiceCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const Duration _voiceCommandCooldown = Duration(seconds: 4);
-
   Future<void> _handleButtonTap(
     String buttonId,
     String spokenText,
@@ -60,179 +49,21 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _initTts();
-    _initSpeech();
   }
 
   Future<void> _initTts() async {
     await applyTtsSettings(_flutterTts);
-    final lang = await currentLanguage();
-    final welcome = welcomeMessages[lang] ?? welcomeMessages['English']!;
-    await Future.delayed(const Duration(seconds: 1));
-    await _flutterTts.speak(welcome);
-  }
-
-  Future<void> _initSpeech() async {
-    _speechReady = await _speech.initialize(
-      onStatus: (status) {
-        if (!mounted) return;
-        if (status == 'done' || status == 'notListening') {
-          setState(() => _isListening = false);
-          _scheduleListeningRestart();
-        }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _isListening = false);
-        _scheduleListeningRestart();
-      },
-    );
-
-    if (_speechReady) {
-      _startListening();
-    }
-  }
-
-  void _scheduleListeningRestart() {
-    if (!mounted || !_speechReady || _isListening || !_allowListening) return;
-    if (_restartListenTimer?.isActive ?? false) return;
-
-    _restartListenTimer = Timer(_restartListeningDelay, () {
-      if (!mounted) return;
-      _startListening();
-    });
-  }
-
-  Future<void> _startListening() async {
-    if (!mounted || !_speechReady || _isListening || !_allowListening) return;
-    _restartListenTimer?.cancel();
-    await _speech.listen(
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
-      listenOptions: SpeechListenOptions(partialResults: true),
-      onResult: _onSpeechResult,
-    );
-    if (mounted) {
-      setState(() => _isListening = _speech.isListening);
-    }
-  }
-
-  Future<void> _setListeningEnabled(bool enabled) async {
-    _allowListening = enabled;
-
-    if (!enabled) {
-      _restartListenTimer?.cancel();
-      if (_speech.isListening) {
-        await _speech.stop();
-      }
-      if (mounted) {
-        setState(() => _isListening = false);
-      }
-      return;
-    }
-
-    await _startListening();
-  }
-
-  Future<void> _navigateWithVoicePause(String routeName) async {
-    await _setListeningEnabled(false);
     if (!mounted) return;
-    await Navigator.pushNamed(context, routeName);
-    if (!mounted) return;
-    await _setListeningEnabled(true);
-  }
-
-  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
-    final spoken = result.recognizedWords.trim().toLowerCase();
-    if (spoken.isEmpty) return;
-
-    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
-    final isMoneyCommand =
-        normalized.contains('open money') ||
-        normalized.contains('money mode') ||
-        normalized.contains('money sense') ||
-        (normalized.contains('money') &&
-            (normalized.contains('sense') || normalized.contains('cents')));
-    final isStreetCommand =
-        normalized.contains('open street') ||
-        normalized.contains('street mode') ||
-        normalized.contains('street smart') ||
-        (normalized.contains('street') && normalized.contains('smart'));
-
-    final now = DateTime.now();
-    if (isMoneyCommand) {
-      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
-        return;
-      }
-      _lastVoiceCommandAt = now;
-      if (mounted) {
-        await _navigateWithVoicePause('/money-sense');
-      }
-      return;
-    }
-
-    if (isStreetCommand) {
-      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
-        return;
-      }
-      _lastVoiceCommandAt = now;
-      if (mounted) {
-        await _navigateWithVoicePause('/street-smart');
-      }
-      return;
-    }
-
-    if (spoken.contains('help me call') || spoken.contains('help me, call')) {
-      if (now.difference(_lastVoiceCommandAt) < _voiceCommandCooldown) {
-        return;
-      }
-      _lastVoiceCommandAt = now;
-      await _triggerEmergencyCall();
-    }
-  }
-
-  Future<void> _triggerEmergencyCall() async {
-    final prefs = await SharedPreferences.getInstance();
-    final name = prefs.getString('mizhi_emergency_contact')?.trim() ?? '';
-    final rawPhone = prefs.getString('mizhi_emergency_phone')?.trim() ?? '';
-
-    if (rawPhone.isEmpty) {
-      await _flutterTts.stop();
-      await _flutterTts.speak('No emergency contact saved. Please add one.');
-      if (mounted) {
-        await _navigateWithVoicePause('/emergency-contact');
-      }
-      return;
-    }
-
-    final normalizedPhone = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
-    final uri = Uri(scheme: 'tel', path: normalizedPhone);
-
-    await _flutterTts.stop();
-    await _flutterTts.speak(
-      name.isNotEmpty ? 'Calling $name' : 'Calling emergency contact',
+    await _flutterTts.say(
+      'Welcome to Mizhi. Tap Street Smart or Money Sense to begin.',
     );
-
-    try {
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched) {
-        if (!mounted) return;
-        await _navigateWithVoicePause('/emergency-contact');
-      }
-    } catch (_) {
-      if (!mounted) return;
-      await _navigateWithVoicePause('/emergency-contact');
-    }
   }
+
+  Future<void> _navigateWithVoicePause(String routeName) =>
+      AppVoiceService.instance.navigate(routeName);
 
   @override
   void dispose() {
-    _restartListenTimer?.cancel();
-    if (_speech.isListening) {
-      _speech.stop();
-    }
     _flutterTts.stop();
     super.dispose();
   }
@@ -260,7 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return Material(
       color: Colors.transparent,
       child: Ink(
-        height: 120,
         width: double.infinity,
         decoration: BoxDecoration(
           color: bgColor,
@@ -282,6 +112,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   imagePath,
                   width: 64,
                   height: 64,
+                  cacheWidth: (64 * MediaQuery.devicePixelRatioOf(context))
+                      .round(),
                   fit: BoxFit.contain,
                 ),
                 const SizedBox(width: 24),
@@ -289,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         title,
@@ -335,8 +168,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Expanded(
                       child: Center(
-                        child: const Text(
-                          "MIZHI",
+                        child: Text(
+                          context.tr("MIZHI"),
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 40,
@@ -374,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 24),
                       // Greeting
                       Text(
-                        _getGreeting(),
+                        context.tr(_getGreeting()),
                         style: const TextStyle(
                           color: Color(0xFFD4AF37),
                           fontSize: 32,
@@ -383,8 +216,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 8),
                       // Help text
-                      const Text(
-                        "How can I help you today?",
+                      Text(
+                        context.tr("How can I help you today?"),
                         style: TextStyle(color: Colors.white, fontSize: 16),
                       ),
                       const SizedBox(height: 32),
@@ -396,8 +229,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? Colors.white
                             : const Color(0xFFD4AF37),
                         imagePath: 'assets/images/Walking.png',
-                        title: "STREET SMART",
-                        subtitle: "Detect obstacles",
+                        title: context.tr("STREET SMART"),
+                        subtitle: context.tr("Detect obstacles"),
                         subtitleColor: Colors.white70,
                         onTap: () {
                           _handleButtonTap(
@@ -417,8 +250,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? Colors.white
                             : const Color(0xFFD4AF37),
                         imagePath: 'assets/images/Rupee.png',
-                        title: "MONEY SENSE",
-                        subtitle: "Identify currency",
+                        title: context.tr("MONEY SENSE"),
+                        subtitle: context.tr("Identify currency"),
                         subtitleColor: Colors.white70,
                         onTap: () {
                           _handleButtonTap(
@@ -438,8 +271,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? Colors.white
                             : const Color(0xFFCC4444),
                         imagePath: 'assets/images/Call.png',
-                        title: "EMERGENCY CONTACT",
-                        subtitle: "",
+                        title: context.tr("EMERGENCY CONTACT"),
+                        subtitle: context.tr(""),
                         subtitleColor: Colors.transparent,
                         onTap: () {
                           _handleButtonTap(

@@ -6,13 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
 class FirebaseLocationService {
+  static final _instance = FirebaseLocationService._();
+  factory FirebaseLocationService() => _instance;
+  FirebaseLocationService._();
   static const String keyEnabled = 'mizhi_live_tracking';
   static const String keyTrackId = 'mizhi_track_id';
   static const String keyContact = 'mizhi_emergency_contact';
   static const String keyTrackingPass = 'mizhi_tracking_password';
 
-  final FirebaseDatabase _db = FirebaseDatabase.instance;
+  FirebaseDatabase get _db => FirebaseDatabase.instance;
   Timer? _timer;
+  bool _uploading = false;
+  int _generation = 0;
   bool _isEnabled = false;
   String? _trackId;
   String? _password;
@@ -35,7 +40,11 @@ class FirebaseLocationService {
       await prefs.setString(keyTrackId, _trackId!);
     }
 
-    if (_isEnabled && _password != null) startTracking();
+    if (_isEnabled && _password != null) {
+      startTracking();
+    } else {
+      stopTracking();
+    }
   }
 
   Future<void> setEnabled(bool value, {String? password}) async {
@@ -55,6 +64,7 @@ class FirebaseLocationService {
   }
 
   void startTracking() {
+    _generation++;
     _timer?.cancel();
     _uploadLocation(); // immediately
     _timer = Timer.periodic(
@@ -65,11 +75,15 @@ class FirebaseLocationService {
   }
 
   void stopTracking() {
+    _generation++;
     _timer?.cancel();
     _timer = null;
   }
 
   Future<void> _uploadLocation() async {
+    if (_uploading) return;
+    _uploading = true;
+    final generation = _generation;
     try {
       // Check permission
       LocationPermission perm = await Geolocator.checkPermission();
@@ -77,8 +91,9 @@ class FirebaseLocationService {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever)
+          perm == LocationPermission.deniedForever) {
         return;
+      }
 
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
@@ -86,6 +101,7 @@ class FirebaseLocationService {
       );
 
       final now = DateTime.now();
+      if (generation != _generation) return;
 
       // Save to Firebase Realtime Database
       await _db.ref('locations/$_trackId').set({
@@ -102,6 +118,8 @@ class FirebaseLocationService {
       debugPrint('Location uploaded: ${pos.latitude}, ${pos.longitude}');
     } catch (e) {
       debugPrint('_uploadLocation error: $e');
+    } finally {
+      _uploading = false;
     }
   }
 
@@ -112,5 +130,5 @@ class FirebaseLocationService {
     await _db.ref('locations/$_trackId/status').set('SOS');
   }
 
-  void dispose() => _timer?.cancel();
+  void dispose() => stopTracking();
 }

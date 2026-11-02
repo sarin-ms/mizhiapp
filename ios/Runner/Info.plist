@@ -2,6 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Mizhi uses the camera to identify objects and currency.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mizhi uses the microphone for your voice commands.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Mizhi recognizes spoken commands to open modes and change settings.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Mizhi uses contacts for emergency assistance.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Mizhi uses your location when you enable emergency location sharing.</string>
+	<key>CFBundleLocalizations</key>
+	<array><string>en</string><string>hi</string><string>ta</string><string>ml</string><string>te</string></array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

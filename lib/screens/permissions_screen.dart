@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/services/app_audio.dart';
 import 'package:mizhi/utils/settings_helper.dart';
 
 class PermissionsScreen extends StatefulWidget {
@@ -16,7 +17,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
   bool _micGranted = false;
   bool _contactsGranted = false;
 
-  final FlutterTts _flutterTts = FlutterTts();
+  final AppAudio _flutterTts = AppAudio.instance;
   String? _focusedButton;
 
   Future<void> _handleButtonTap(
@@ -90,8 +91,10 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Please allow all permissions for Mizhi to work"),
+          SnackBar(
+            content: Text(
+              context.tr("Please allow all permissions for Mizhi to work"),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -175,8 +178,8 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
             }
           }),
         ),
-        title: const Text(
-          "MIZHI",
+        title: Text(
+          context.tr("MIZHI"),
           style: TextStyle(
             color: Color(0xFF00D4AA), // teal center bold 18sp
             fontSize: 18,
@@ -224,8 +227,8 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text(
-                  "Before we begin",
+                Text(
+                  context.tr("Before we begin"),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
@@ -234,8 +237,10 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  "Mizhi needs these permissions to guide you safely.",
+                Text(
+                  context.tr(
+                    "Mizhi needs these permissions to guide you safely.",
+                  ),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white60, fontSize: 16),
                 ),
@@ -243,20 +248,20 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
 
                 _buildPermissionRow(
                   icon: Icons.camera_alt,
-                  title: "Camera",
-                  subtitle: "To see obstacles and read currency",
+                  title: context.tr("Camera"),
+                  subtitle: context.tr("To see obstacles and read currency"),
                   isGranted: _cameraGranted,
                 ),
                 _buildPermissionRow(
                   icon: Icons.mic,
-                  title: "Microphone",
-                  subtitle: "For voice commands",
+                  title: context.tr("Microphone"),
+                  subtitle: context.tr("For voice commands"),
                   isGranted: _micGranted,
                 ),
                 _buildPermissionRow(
                   icon: Icons.phone_android,
-                  title: "Phone & Contacts",
-                  subtitle: "For emergency alerts",
+                  title: context.tr("Phone & Contacts"),
+                  subtitle: context.tr("For emergency alerts"),
                   isGranted: _contactsGranted,
                 ),
 
@@ -281,8 +286,8 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                       ),
                       elevation: 0,
                     ),
-                    child: const Text(
-                      "Allow All & Continue →",
+                    child: Text(
+                      context.tr("Allow All & Continue →"),
                       style: TextStyle(
                         color: Colors.black,
                         fontWeight: FontWeight.bold,

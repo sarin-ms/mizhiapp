@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   camera: ^0.10.5
   tflite_flutter: ^0.12.1
   flutter_tts: ^3.8.5
@@ -53,4 +55,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/models/
+    - assets/models/mizhi_street_smart.tflite
+    - assets/models/street_labels.txt
+    - assets/models/mizhi_money_sense.tflite
+    - assets/models/currency_labels.txt

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/services/app_audio.dart';
 import 'package:mizhi/utils/settings_helper.dart';
 
 class EmergencyContactScreen extends StatefulWidget {
@@ -15,7 +16,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
   final _phoneController = TextEditingController();
   bool _isSaving = false;
 
-  final FlutterTts _flutterTts = FlutterTts();
+  final AppAudio _flutterTts = AppAudio.instance;
   String? _focusedButton;
 
   Future<void> _handleButtonTap(
@@ -71,8 +72,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Emergency contact saved'),
+        SnackBar(
+          content: Text(context.tr('Emergency contact saved')),
           backgroundColor: _teal,
           duration: Duration(seconds: 2),
         ),
@@ -89,8 +90,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
     _phoneController.clear();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Emergency contact removed'),
+        SnackBar(
+          content: Text(context.tr('Emergency contact removed')),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 2),
         ),
@@ -125,8 +126,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
             () => Navigator.pop(context),
           ),
         ),
-        title: const Text(
-          'EMERGENCY CONTACT',
+        title: Text(
+          context.tr('EMERGENCY CONTACT'),
           style: TextStyle(
             color: Colors.white,
             fontSize: 18,
@@ -150,7 +151,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                 border: Border.all(color: const Color(0xFFFF4444), width: 1),
               ),
               child: Row(
-                children: const [
+                children: [
                   Icon(
                     Icons.warning_amber_rounded,
                     color: Color(0xFFFF4444),
@@ -159,7 +160,9 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'This contact will be alerted in emergencies via voice command "Help me call".',
+                      context.tr(
+                        'This contact will be alerted in emergencies via voice command "Help me call".',
+                      ),
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ),
@@ -169,8 +172,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
             const SizedBox(height: 24),
 
             // Name field
-            const Text(
-              'Contact Name',
+            Text(
+              context.tr('Contact Name'),
               style: TextStyle(
                 color: _teal,
                 fontSize: 12,
@@ -188,7 +191,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                 controller: _nameController,
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
-                  hintText: 'e.g. Mom, Dad, Guardian',
+                  hintText: context.tr('e.g. Mom, Dad, Guardian'),
                   hintStyle: TextStyle(
                     color: Colors.white.withValues(alpha: 0.3),
                   ),
@@ -204,8 +207,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
             const SizedBox(height: 20),
 
             // Phone field
-            const Text(
-              'Phone Number',
+            Text(
+              context.tr('Phone Number'),
               style: TextStyle(
                 color: _teal,
                 fontSize: 12,
@@ -224,7 +227,7 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                 keyboardType: TextInputType.phone,
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
-                  hintText: '+91 98765 43210',
+                  hintText: context.tr('+91 98765 43210'),
                   hintStyle: TextStyle(
                     color: Colors.white.withValues(alpha: 0.3),
                   ),
@@ -270,8 +273,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                           strokeWidth: 2,
                         ),
                       )
-                    : const Text(
-                        'SAVE CONTACT',
+                    : Text(
+                        context.tr('SAVE CONTACT'),
                         style: TextStyle(
                           color: Colors.black,
                           fontSize: 16,
@@ -303,8 +306,8 @@ class _EmergencyContactScreenState extends State<EmergencyContactScreen> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: const Text(
-                  'REMOVE CONTACT',
+                child: Text(
+                  context.tr('REMOVE CONTACT'),
                   style: TextStyle(
                     color: Color(0xFFFF4444),
                     fontSize: 14,

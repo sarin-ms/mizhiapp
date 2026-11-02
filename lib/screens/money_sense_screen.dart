@@ -1,9 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
+import 'package:mizhi/services/app_settings.dart';
+import 'package:mizhi/services/app_voice_service.dart';
 import 'package:camera/camera.dart';
-import 'package:flutter_tts/flutter_tts.dart';import 'package:speech_to_text/speech_to_text.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';import 'package:mizhi/services/currency_service.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
+import 'package:mizhi/services/detection_pipeline.dart'
+    show cameraImageRotation;
+import 'package:mizhi/services/detection_tracking.dart' show DetectionCadence;
+import 'package:mizhi/services/app_audio.dart';
+import 'package:mizhi/services/currency_service.dart';
 import 'package:mizhi/utils/settings_helper.dart';
 import 'package:mizhi/utils/localization.dart';
 
@@ -15,26 +23,38 @@ class MoneySenseScreen extends StatefulWidget {
 }
 
 class _MoneySenseScreenState extends State<MoneySenseScreen> {
+  bool _modelReady = false;
+  bool _cameraActive = false;
+  Future<void> _cameraTransition = Future.value();
+  String _lastLanguage = AppSettings.instance.language;
+
+  void _settingsChanged() {
+    if (_lastLanguage != AppSettings.instance.language) {
+      _lastLanguage = AppSettings.instance.language;
+      _lastAnnouncedDenomination = '';
+    }
+    if (mounted) setState(() {});
+  }
+
   CameraController? _cameraController;
   bool _isCameraInitialized = false;
   bool _isPermissionDenied = false;
+  String? _modelError;
+  int _cameraGeneration = 0;
 
   final CurrencyService _currencyService = CurrencyService();
-  final FlutterTts _flutterTts = FlutterTts();
-  final SpeechToText _speech = SpeechToText();
+  final AppAudio _flutterTts = AppAudio.instance;
 
   CurrencyResult? _result;
   String _lastAnnouncedDenomination = "";
-  int _emptyFrames = 0;
-  int _frameCount = 0;
-  bool _isProcessing = false;
-  String _language = 'English';
+  DateTime _lastResultAt = DateTime.fromMillisecondsSinceEpoch(0);
+  final _cadence = DetectionCadence(
+    minimum: const Duration(milliseconds: 250),
+    maximum: const Duration(milliseconds: 1000),
+    recovery: const Duration(milliseconds: 50),
+  );
+  String get _language => AppSettings.instance.language;
   bool _flashlightEnabled = false;
-  bool _speechReady = false;
-  bool _isListening = false;
-  Timer? _restartListenTimer;
-  static const Duration _restartListeningDelay = Duration(seconds: 2);
-
   String? _focusedButton;
 
   Future<void> _handleButtonTap(
@@ -61,40 +81,44 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   @override
   void initState() {
     super.initState();
+    AppSettings.instance.addListener(_settingsChanged);
+    AppVoiceService.instance.registerCamera(
+      '/money-sense',
+      this,
+      pause: _pauseCamera,
+      resume: _resumeCamera,
+      flashlight: _setFlashlight,
+    );
+
     _initServices();
   }
 
   Future<void> _initServices() async {
-    // Step 1: Init model FIRST, wait for it completely
     await _currencyService.init();
-    debugPrint(
-      'Currency service init done. isInit = ${_currencyService.isInit}',
-    );
+    if (!mounted) {
+      await _currencyService.dispose();
+      return;
+    }
+    if (!_currencyService.isInit) {
+      setState(
+        () => _modelError =
+            'Currency detection could not start. Please reopen Money Sense.',
+      );
+      return;
+    }
 
     // Step 2: Init TTS with user's saved settings
     await applyTtsSettings(_flutterTts);
-    _language = await currentLanguage();
 
-    // Step 2b: Init speech recognition for flashlight commands
-    _speechReady = await _speech.initialize(
-      onStatus: (status) {
-        if (!mounted) return;
-        if (status == 'done' || status == 'notListening') {
-          setState(() => _isListening = false);
-          _scheduleListeningRestart();
-        }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _isListening = false);
-        _scheduleListeningRestart();
-      },
-    );
+    if (!mounted) {
+      await _currencyService.dispose();
+      return;
+    }
+    _modelReady = true;
+    await _resumeCamera();
+  }
 
-    // Step 3: Wait for any previous camera to release
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    // Step 4: Init camera LAST
+  Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
       final backCamera = cameras.firstWhere(
@@ -106,6 +130,9 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
         backCamera,
         ResolutionPreset.medium,
         enableAudio: false,
+        imageFormatGroup: defaultTargetPlatform == TargetPlatform.iOS
+            ? ImageFormatGroup.bgra8888
+            : ImageFormatGroup.yuv420,
       );
 
       await _cameraController!.initialize();
@@ -113,18 +140,11 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
 
       setState(() => _isCameraInitialized = true);
 
-      _cameraController!.startImageStream((CameraImage image) {
-        _frameCount++;
-        if (_frameCount % 15 == 0 && !_isProcessing) {
-          _isProcessing = true;
-          _runClassification(image);
+      await _cameraController!.startImageStream((CameraImage image) {
+        if (mounted && _cameraActive && _cadence.tryStart(DateTime.now())) {
+          unawaited(_runClassification(image));
         }
       });
-
-      // Start listening for voice commands after camera is ready
-      if (_speechReady) {
-        _startListening();
-      }
     } on CameraException catch (e) {
       if (e.code == 'CameraAccessDenied') {
         if (mounted) setState(() => _isPermissionDenied = true);
@@ -134,113 +154,130 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   }
 
   Future<void> _runClassification(CameraImage image) async {
-    final result = await _currencyService.classify(image);
-
-    if (mounted) {
+    final stopwatch = Stopwatch()..start();
+    final generation = _cameraGeneration;
+    try {
+      final camera = _cameraController!;
+      final rotation = defaultTargetPlatform == TargetPlatform.iOS
+          ? 0
+          : cameraImageRotation(
+              camera.description,
+              camera.value.deviceOrientation,
+            );
+      final result = await _currencyService.classify(
+        image,
+        rotationDegrees: rotation,
+      );
+      if (!mounted || !_cameraActive || generation != _cameraGeneration) return;
+      final now = DateTime.now();
       if (result != null) {
-        setState(() {
-          _result = result;
-        });
-        _emptyFrames = 0;
+        if (_result?.denomination != result.denomination ||
+            (_result!.confidence * 100).toInt() !=
+                (result.confidence * 100).toInt()) {
+          setState(() => _result = result);
+        }
+        _lastResultAt = now;
 
-        if (result.denomination != _lastAnnouncedDenomination) {
+        if (result.denomination != _lastAnnouncedDenomination &&
+            !AppVoiceService.instance.acceptingCommand &&
+            !_flutterTts.speaking) {
           _flutterTts.speak(_currencyAnnouncement(result.denomination));
           _lastAnnouncedDenomination = result.denomination;
         }
       } else {
-        _emptyFrames++;
-        if (_emptyFrames >= 30) {
-          setState(() {
-            _result = null;
-          });
+        if (_result != null &&
+            now.difference(_lastResultAt) >= const Duration(seconds: 2)) {
+          setState(() => _result = null);
           _lastAnnouncedDenomination = "";
         }
       }
+    } catch (e) {
+      debugPrint('Currency frame processing failed: $e');
+    } finally {
+      stopwatch.stop();
+      _cadence.finish(stopwatch.elapsed, DateTime.now());
     }
-
-    _isProcessing = false;
   }
 
   String _currencyAnnouncement(String denomination) {
     return currencyAnnouncement(denomination, _language);
   }
 
-  void _stopAndPop() {
-    if (_cameraController != null &&
-        _cameraController!.value.isStreamingImages) {
-      _cameraController!.stopImageStream();
+  Future<void> _resumeCamera() {
+    _cameraTransition = _cameraTransition.then((_) async {
+      if (!mounted ||
+          !_modelReady ||
+          _cameraController != null ||
+          !AppVoiceService.instance.cameraActive('/money-sense')) {
+        return;
+      }
+      _cameraActive = true;
+      await _initCamera();
+    });
+    return _cameraTransition;
+  }
+
+  Future<void> _pauseCamera() {
+    _cameraActive = false;
+    _cameraGeneration++;
+    _currencyService.reset();
+    _cameraTransition = _cameraTransition.then((_) async {
+      final camera = _cameraController;
+      _cameraController = null;
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = false;
+          _flashlightEnabled = false;
+        });
+      }
+      if (camera != null) {
+        try {
+          if (camera.value.isStreamingImages) await camera.stopImageStream();
+        } on CameraException catch (e) {
+          debugPrint('Camera stream cleanup: $e');
+        } finally {
+          try {
+            await camera.dispose();
+          } on CameraException catch (e) {
+            debugPrint('Camera disposal: $e');
+          }
+        }
+      }
+    });
+    return _cameraTransition;
+  }
+
+  Future<bool> _setFlashlight(bool enabled) async {
+    final camera = _cameraController;
+    if (!_cameraActive || camera == null || !camera.value.isInitialized) {
+      return false;
     }
-    Navigator.pop(context);
+    try {
+      await camera.setFlashMode(enabled ? FlashMode.torch : FlashMode.off);
+      if (mounted) setState(() => _flashlightEnabled = enabled);
+      return true;
+    } on CameraException {
+      return false;
+    }
+  }
+
+  Future<void> _stopAndPop() async {
+    await _pauseCamera();
+    if (mounted) Navigator.pop(context);
   }
 
   @override
   void dispose() {
-    _restartListenTimer?.cancel();
-    if (_cameraController != null &&
-        _cameraController!.value.isStreamingImages) {
-      _cameraController!.stopImageStream();
-    }
-    _cameraController?.dispose();
-    _currencyService.dispose();
-    _flutterTts.stop();
-    if (_speech.isListening) {
-      _speech.stop();
-    }
+    AppSettings.instance.removeListener(_settingsChanged);
+    AppVoiceService.instance.unregisterCamera('/money-sense', this);
+    unawaited(_pauseCamera());
+    unawaited(_currencyService.dispose());
     super.dispose();
-  }
-
-  Future<void> _startListening() async {
-    if (!mounted || !_speechReady || _isListening) return;
-    _restartListenTimer?.cancel();
-    await _speech.listen(
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
-      listenOptions: SpeechListenOptions(partialResults: true),
-      onResult: _onSpeechResult,
-    );
-    if (mounted) {
-      setState(() => _isListening = _speech.isListening);
-    }
-  }
-
-  void _scheduleListeningRestart() {
-    if (!mounted || !_speechReady || _isListening) return;
-    if (_restartListenTimer?.isActive ?? false) return;
-
-    _restartListenTimer = Timer(_restartListeningDelay, () {
-      if (!mounted) return;
-      _startListening();
-    });
-  }
-
-  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
-    final spoken = result.recognizedWords.trim().toLowerCase();
-    if (spoken.isEmpty) return;
-
-    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
-
-    if (normalized.contains('flash on') || normalized.contains('flashlight on')) {
-      if (!_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
-        await _cameraController!.setFlashMode(FlashMode.torch);
-        setState(() => _flashlightEnabled = true);
-        await _flutterTts.speak('Flashlight on');
-      }
-      return;
-    }
-
-    if (normalized.contains('flash off') || normalized.contains('flashlight off')) {
-      if (_flashlightEnabled && _cameraController != null && _cameraController!.value.isInitialized) {
-        await _cameraController!.setFlashMode(FlashMode.off);
-        setState(() => _flashlightEnabled = false);
-        await _flutterTts.speak('Flashlight off');
-      }
-      return;
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isPermissionDenied) {
+    if (_isPermissionDenied || _modelError != null) {
       return Scaffold(
         backgroundColor: const Color(0xFF0A0E21),
         appBar: AppBar(
@@ -260,9 +297,9 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
             ),
           ),
         ),
-        body: const Center(
+        body: Center(
           child: Text(
-            "Camera permission required",
+            context.tr(_modelError ?? "Camera permission required"),
             style: TextStyle(color: Colors.white, fontSize: 18),
           ),
         ),
@@ -275,13 +312,15 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
         children: [
           // Layer 1: CameraPreview full screen
           if (_isCameraInitialized)
-            SizedBox.expand(
-              child: FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _cameraController!.value.previewSize?.height ?? 1,
-                  height: _cameraController!.value.previewSize?.width ?? 1,
-                  child: CameraPreview(_cameraController!),
+            RepaintBoundary(
+              child: SizedBox.expand(
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: _cameraController!.value.previewSize?.height ?? 1,
+                    height: _cameraController!.value.previewSize?.width ?? 1,
+                    child: CameraPreview(_cameraController!),
+                  ),
                 ),
               ),
             ),
@@ -315,8 +354,8 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                       _stopAndPop,
                     ),
                   ),
-                  const Text(
-                    "MONEY SENSE",
+                  Text(
+                    context.tr("MONEY SENSE"),
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -353,8 +392,8 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                   painter: ViewfinderPainter(),
                   child: Center(
                     child: _result == null
-                        ? const Text(
-                            "Hold note here",
+                        ? Text(
+                            context.tr("Hold note here"),
                             style: TextStyle(
                               color: Colors.white54,
                               fontSize: 18,
@@ -372,7 +411,9 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
             left: 0,
             right: 0,
             child: Container(
-              height: 220,
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+              ),
               decoration: const BoxDecoration(
                 color: Color(0xEE0A0E21),
                 borderRadius: BorderRadius.only(
@@ -380,7 +421,11 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
                   topRight: Radius.circular(24),
                 ),
               ),
-              child: _result == null ? _buildStateA() : _buildStateB(_result!),
+              child: SingleChildScrollView(
+                child: _result == null
+                    ? _buildStateA()
+                    : _buildStateB(_result!),
+              ),
             ),
           ),
         ],
@@ -389,33 +434,36 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   }
 
   Widget _buildStateA() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(
-          Icons.currency_rupee,
-          color: Color(0xFFD4AF37),
-          size: 48,
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          "Point camera at a currency note",
-          style: TextStyle(color: Colors.white60, fontSize: 16),
-        ),
-        const SizedBox(height: 20),
-        _buildFlashlightPill(),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.currency_rupee, color: Color(0xFFD4AF37), size: 48),
+          const SizedBox(height: 12),
+          Text(
+            context.tr("Point camera at a currency note"),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white60, fontSize: 16),
+          ),
+          const SizedBox(height: 20),
+          _buildFlashlightPill(),
+        ],
+      ),
     );
   }
 
   Widget _buildStateB(CurrencyResult res) {
-    final String fullName =
-        denominationNames[res.denomination] ?? "${res.denomination} Rupees";
+    final String fullName = context.tr('{amount} Rupees', {
+      'amount': res.denomination,
+    });
     final double confPercent = res.confidence * 100;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
@@ -431,6 +479,7 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
           const SizedBox(height: 4),
           Text(
             fullName.toUpperCase(),
+            textAlign: TextAlign.center,
             style: const TextStyle(
               color: Color(0xFFD4AF37),
               fontSize: 20,
@@ -441,13 +490,12 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                "CONFIDENCE: ",
+              Text(
+                context.tr("CONFIDENCE: "),
                 style: TextStyle(color: Colors.white, fontSize: 14),
               ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 140,
+              Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
@@ -472,9 +520,7 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildFlashlightPill(),
-            ],
+            children: [_buildFlashlightPill()],
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -496,15 +542,18 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   Icon(Icons.volume_up, color: Colors.black),
                   SizedBox(width: 8),
-                  Text(
-                    "ANNOUNCE AGAIN",
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                  Expanded(
+                    child: Text(
+                      context.tr("ANNOUNCE AGAIN"),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                 ],
@@ -519,26 +568,31 @@ class _MoneySenseScreenState extends State<MoneySenseScreen> {
   Widget _buildFlashlightPill() {
     return GestureDetector(
       onTap: () async {
-        if (_cameraController != null && _cameraController!.value.isInitialized) {
+        if (_cameraController != null &&
+            _cameraController!.value.isInitialized) {
           await _cameraController!.setFlashMode(
             _flashlightEnabled ? FlashMode.off : FlashMode.torch,
           );
           setState(() => _flashlightEnabled = !_flashlightEnabled);
-          await _flutterTts.speak('Flashlight ${_flashlightEnabled ? "on" : "off"}');
+          await _flutterTts.speak(
+            _flashlightEnabled ? 'Flashlight on' : 'Flashlight off',
+          );
         }
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: _flashlightEnabled ? const Color(0xFFFFD700) : Colors.grey.shade700,
+          color: _flashlightEnabled
+              ? const Color(0xFFFFD700)
+              : Colors.grey.shade700,
           borderRadius: BorderRadius.circular(20),
           border: _focusedButton == 'flashlight_toggle'
               ? Border.all(color: Colors.white, width: 2)
               : null,
         ),
         child: Text(
-          _flashlightEnabled ? 'FLASH: ON' : 'FLASH: OFF',
+          context.tr(_flashlightEnabled ? 'FLASH: ON' : 'FLASH: OFF'),
           style: TextStyle(
             color: _flashlightEnabled ? Colors.black : Colors.white,
             fontWeight: FontWeight.bold,

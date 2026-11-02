@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -88,6 +89,7 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(seconds: 1));
     if (mounted) {
       final allPermissionsGranted = await _allPermissionsGranted();
+      if (!mounted) return;
       final route = allPermissionsGranted ? '/home' : '/permissions';
       Navigator.pushReplacementNamed(context, route);
     }
@@ -112,6 +114,8 @@ class _SplashScreenState extends State<SplashScreen>
                   key: ValueKey(_currentFrame),
                   width: 180,
                   height: 180,
+                  cacheWidth: (180 * MediaQuery.devicePixelRatioOf(context))
+                      .round(),
                   fit: BoxFit.contain,
                 ),
               ),
@@ -127,10 +131,10 @@ class _SplashScreenState extends State<SplashScreen>
                 offset: _showText ? Offset.zero : const Offset(0, 0.3),
                 duration: const Duration(milliseconds: 600),
                 curve: Curves.easeOut,
-                child: const Column(
+                child: Column(
                   children: [
                     Text(
-                      'MIZHI',
+                      context.tr('MIZHI'),
                       style: TextStyle(
                         color: Colors.black,
                         fontSize: 48,
@@ -140,7 +144,7 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                     SizedBox(height: 8),
                     Text(
-                      'Your AI eyes. Always.',
+                      context.tr('Your AI eyes. Always.'),
                       style: TextStyle(
                         color: Colors.black54,
                         fontSize: 16,

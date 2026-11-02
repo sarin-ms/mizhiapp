@@ -62,14 +62,18 @@ const Map<String, String> alertMessages = {
   'apple': 'Food item nearby',
   'sandwich': 'Food item nearby',
   'orange': 'Food item nearby',
+  'broccoli': 'Broccoli detected',
+  'carrot': 'Carrot detected',
+  'hot dog': 'Hot dog detected',
   'pizza': 'Food item nearby',
+  'donut': 'Donut detected',
   'cake': 'Food item nearby',
 
   // Bags / carried items
   'backpack': 'Backpack detected',
   'umbrella': 'Umbrella nearby',
   'handbag': 'Bag on path',
-  'tie': 'Person nearby',
+  'tie': 'Tie detected',
   'suitcase': 'Luggage on path',
 
   // Sports

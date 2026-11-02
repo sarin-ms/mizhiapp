@@ -1,12 +1,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:mizhi/l10n/app_localizations.dart';
+import 'package:mizhi/l10n/object_names.dart';
+import 'package:mizhi/services/app_settings.dart';
+import 'package:mizhi/services/app_voice_service.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:camera/camera.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:mizhi/services/app_audio.dart';
 import 'package:vibration/vibration.dart';
-import 'package:speech_to_text/speech_to_text.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
+
 import 'package:mizhi/services/detection_service.dart';
+import 'package:mizhi/services/detection_pipeline.dart'
+    show cameraImageRotation, detectionBoxOnPreview;
+import 'package:mizhi/services/detection_tracking.dart' show DetectionCadence;
 import 'package:mizhi/utils/settings_helper.dart';
 
 class StreetSmartScreen extends StatefulWidget {
@@ -18,24 +26,30 @@ class StreetSmartScreen extends StatefulWidget {
 
 class _StreetSmartScreenState extends State<StreetSmartScreen>
     with TickerProviderStateMixin {
+  bool _modelReady = false;
+  bool _cameraActive = false;
+  Future<void> _cameraTransition = Future.value();
+
+  void _settingsChanged() {
+    if (mounted) setState(() {});
+  }
+
   CameraController? _cameraController;
   bool _isCameraInitialized = false;
   bool _isPermissionDenied = false;
+  String? _detectionError;
 
   final DetectionService _detectionService = DetectionService();
-  final FlutterTts _flutterTts = FlutterTts();
-  final SpeechToText _speech = SpeechToText();
+  final AppAudio _flutterTts = AppAudio.instance;
 
-  List<Detection> _currentDetections = [];
-  bool _isDetecting = false;
-  int _frameCount = 0;
-  DateTime _nextDetectionAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const Duration _baseDetectionInterval = Duration(milliseconds: 900);
-  static const Duration _maxDetectionInterval = Duration(milliseconds: 2200);
-  static const int _baseDetectionEveryNFrames = 14;
-  int _dynamicDetectionEveryNFrames = _baseDetectionEveryNFrames;
-  Duration _dynamicDetectionInterval = _baseDetectionInterval;
-  String _lastDetectionSignature = '';
+  final _overlay =
+      ValueNotifier<({List<Detection> detections, Size frameSize})>((
+        detections: const [],
+        frameSize: const Size(480, 640),
+      ));
+  List<Detection> get _currentDetections => _overlay.value.detections;
+  Size get _detectionFrameSize => _overlay.value.frameSize;
+  final DetectionCadence _detectionCadence = DetectionCadence();
   bool _hasVibrator = false;
   bool _isAlertInProgress = false;
   DateTime _lastAlertAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -67,18 +81,9 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     }
   }
 
-  bool _voiceEnabled = true;
-  bool _vibrationEnabled = true;
+  bool get _voiceEnabled => AppSettings.instance.voiceFeedback;
+  bool get _vibrationEnabled => AppSettings.instance.vibration;
   bool _flashlightEnabled = false;
-  bool _speechReady = false;
-  bool _isListening = false;
-  Timer? _restartListenTimer;
-  static const Duration _restartListeningDelay = Duration(seconds: 2);
-
-  // Store preview dimensions for correct box scaling
-  double _previewW = 1;
-  double _previewH = 1;
-
   late AnimationController _pulseController;
   late Animation<double> _scaleAnimation;
   late Animation<double> _opacityAnimation;
@@ -86,6 +91,15 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   @override
   void initState() {
     super.initState();
+    AppSettings.instance.addListener(_settingsChanged);
+    AppVoiceService.instance.registerCamera(
+      '/street-smart',
+      this,
+      pause: _pauseCamera,
+      resume: _resumeCamera,
+      flashlight: _setFlashlight,
+    );
+
     _initAnimations();
     _initServices();
   }
@@ -94,7 +108,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
-    )..repeat(reverse: true);
+    );
     _scaleAnimation = Tween<double>(begin: 0.9, end: 1.1).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
@@ -105,32 +119,27 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
   Future<void> _initServices() async {
     await _detectionService.init();
+    if (!mounted) {
+      _detectionService.dispose();
+      return;
+    }
+    if (!_detectionService.isInitialized) {
+      setState(
+        () => _detectionError =
+            'Object detection could not start. Please reopen Street Smart.',
+      );
+      return;
+    }
 
     // Apply user's saved TTS settings (language, speed, volume)
     await applyTtsSettings(_flutterTts);
-    _vibrationEnabled = await loadVibrationPref();
     _hasVibrator = await Vibration.hasVibrator();
 
-    // Initialize speech recognition for flashlight commands
-    _speechReady = await _speech.initialize(
-      onStatus: (status) {
-        if (!mounted) return;
-        if (status == 'done' || status == 'notListening') {
-          setState(() => _isListening = false);
-          _scheduleListeningRestart();
-        }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _isListening = false);
-        _scheduleListeningRestart();
-      },
-    );
+    _modelReady = true;
+    await _resumeCamera();
+  }
 
-    if (_speechReady) {
-      _startListening();
-    }
-
+  Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
       final backCamera = cameras.firstWhere(
@@ -140,32 +149,26 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
       _cameraController = CameraController(
         backCamera,
-        ResolutionPreset.high,
+        ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420,
+        imageFormatGroup: defaultTargetPlatform == TargetPlatform.iOS
+            ? ImageFormatGroup.bgra8888
+            : ImageFormatGroup.yuv420,
       );
 
       await _cameraController!.initialize();
       if (!mounted) return;
 
-      // Store actual preview size for box scaling
-      final previewSize = _cameraController!.value.previewSize!;
-      _previewW = previewSize.height; // rotated on Android
-      _previewH = previewSize.width;
-
       setState(() => _isCameraInitialized = true);
 
-      _cameraController!.startImageStream((CameraImage image) {
-        if (_isDetecting) return;
-        _frameCount++;
-        if (_frameCount % _dynamicDetectionEveryNFrames != 0) return;
-
-        final now = DateTime.now();
-        if (now.isBefore(_nextDetectionAt)) return;
-
-        _isDetecting = true;
-        _nextDetectionAt = now.add(_dynamicDetectionInterval);
-        _runDetection(image);
+      await _cameraController!.startImageStream((CameraImage image) {
+        if (!mounted ||
+            !_cameraActive ||
+            _detectionError != null ||
+            !_detectionCadence.tryStart(DateTime.now())) {
+          return;
+        }
+        unawaited(_runDetection(image));
       });
     } on CameraException catch (e) {
       if (e.code == 'CameraAccessDenied') {
@@ -179,36 +182,48 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
   Future<void> _runDetection(CameraImage image) async {
     final sw = Stopwatch()..start();
     try {
-      // Detection is throttled to keep camera preview and UI responsive.
-      final detections = await _detectionService.detect(image);
-      final visibleDetections = detections.take(3).toList(growable: false);
+      // The worker handles pixels and inference while native preview continues.
+      final rotation = _imageRotation();
+      final detections = await _detectionService.detect(
+        image,
+        rotationDegrees: rotation,
+      );
+      final swapAxes = rotation == 90 || rotation == 270;
+      final frameSize = Size(
+        (swapAxes ? image.height : image.width).toDouble(),
+        (swapAxes ? image.width : image.height).toDouble(),
+      );
 
-      if (!mounted) return;
-
-      final signature = _buildDetectionSignature(visibleDetections);
-      if (signature != _lastDetectionSignature) {
-        setState(() {
-          _currentDetections = visibleDetections;
-          _lastDetectionSignature = signature;
-        });
+      if (!mounted ||
+          !_cameraActive ||
+          _cameraController == null ||
+          rotation != _imageRotation()) {
+        return;
       }
 
+      // Boxes can move even when their labels and confidence stay the same.
+      _overlay.value = (detections: detections, frameSize: frameSize);
+
+      final now = DateTime.now();
+      if (_isAlertInProgress || now.difference(_lastAlertAt) < _alertInterval) {
+        return;
+      }
       final msg = _detectionService.getAlertMessage(
         detections,
-        image.width.toDouble(),
-        image.height.toDouble(),
+        frameSize.width,
+        frameSize.height,
+        _cameraController!.description.lensDirection ==
+            CameraLensDirection.front,
       );
-      final now = DateTime.now();
-      if (msg != null &&
-          !_isAlertInProgress &&
-          _shouldSpeakAlert(msg, now) &&
-          now.difference(_lastAlertAt) >= _alertInterval) {
+      if (msg != null && _shouldSpeakAlert(msg, now)) {
         _isAlertInProgress = true;
         _lastAlertAt = now;
         _lastSpokenAlert = msg;
         _lastSpokenAlertAt = now;
 
-        if (_voiceEnabled) {
+        if (_voiceEnabled &&
+            !AppVoiceService.instance.acceptingCommand &&
+            !_flutterTts.speaking) {
           _flutterTts.speak(msg);
         }
         if (_vibrationEnabled && _hasVibrator) {
@@ -219,11 +234,32 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
           _isAlertInProgress = false;
         });
       }
+    } catch (e, s) {
+      debugPrint('Street Smart detection error: $e\n$s');
+      if (mounted && _cameraActive) {
+        setState(() {
+          _overlay.value = (
+            detections: const [],
+            frameSize: _detectionFrameSize,
+          );
+          _detectionError =
+              'Object detection could not process the camera. Please reopen Street Smart.';
+        });
+      }
     } finally {
       sw.stop();
-      _tuneDetectionCadence(sw.elapsedMilliseconds);
-      _isDetecting = false;
+      _detectionCadence.finish(sw.elapsed, DateTime.now());
     }
+  }
+
+  int _imageRotation() {
+    // AVFoundation delivers frames in the current capture orientation.
+    if (defaultTargetPlatform == TargetPlatform.iOS) return 0;
+    final controller = _cameraController!;
+    return cameraImageRotation(
+      controller.description,
+      controller.value.deviceOrientation,
+    );
   }
 
   bool _shouldSpeakAlert(String message, DateTime now) {
@@ -231,141 +267,78 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
     return now.difference(_lastSpokenAlertAt) >= _sameAlertSpeakCooldown;
   }
 
-  void _tuneDetectionCadence(int detectMs) {
-    if (detectMs >= 320) {
-      _dynamicDetectionEveryNFrames = (_dynamicDetectionEveryNFrames + 2).clamp(
-        14,
-        30,
-      );
-      final grown =
-          _dynamicDetectionInterval + const Duration(milliseconds: 300);
-      _dynamicDetectionInterval = grown > _maxDetectionInterval
-          ? _maxDetectionInterval
-          : grown;
-      return;
-    }
-
-    if (detectMs >= 220) {
-      _dynamicDetectionEveryNFrames = (_dynamicDetectionEveryNFrames + 1).clamp(
-        14,
-        24,
-      );
-      final grown =
-          _dynamicDetectionInterval + const Duration(milliseconds: 150);
-      _dynamicDetectionInterval = grown > _maxDetectionInterval
-          ? _maxDetectionInterval
-          : grown;
-      return;
-    }
-
-    if (detectMs <= 140) {
-      _dynamicDetectionEveryNFrames = (_dynamicDetectionEveryNFrames - 1).clamp(
-        10,
-        30,
-      );
-      final shrunk =
-          _dynamicDetectionInterval - const Duration(milliseconds: 120);
-      _dynamicDetectionInterval = shrunk < _baseDetectionInterval
-          ? _baseDetectionInterval
-          : shrunk;
-    }
+  Future<void> _resumeCamera() {
+    _cameraTransition = _cameraTransition.then((_) async {
+      if (!mounted ||
+          !_modelReady ||
+          _cameraController != null ||
+          !AppVoiceService.instance.cameraActive('/street-smart')) {
+        return;
+      }
+      _cameraActive = true;
+      _pulseController.repeat(reverse: true);
+      await _initCamera();
+    });
+    return _cameraTransition;
   }
 
-  String _buildDetectionSignature(List<Detection> detections) {
-    if (detections.isEmpty) return '';
-    final top = detections
-        .take(3)
-        .map((d) => '${d.label}:${(d.confidence * 100).toInt()}')
-        .join('|');
-    return '$top#${detections.length}';
+  Future<void> _pauseCamera() {
+    _cameraActive = false;
+    if (mounted) _pulseController.stop();
+    _cameraTransition = _cameraTransition.then((_) async {
+      final camera = _cameraController;
+      _cameraController = null;
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = false;
+          _flashlightEnabled = false;
+        });
+      }
+      if (camera != null) {
+        try {
+          if (camera.value.isStreamingImages) await camera.stopImageStream();
+        } on CameraException catch (e) {
+          debugPrint('Camera stream cleanup: $e');
+        } finally {
+          try {
+            await camera.dispose();
+          } on CameraException catch (e) {
+            debugPrint('Camera disposal: $e');
+          }
+        }
+      }
+    });
+    return _cameraTransition;
+  }
+
+  Future<bool> _setFlashlight(bool enabled) async {
+    final camera = _cameraController;
+    if (!_cameraActive || camera == null || !camera.value.isInitialized) {
+      return false;
+    }
+    try {
+      await camera.setFlashMode(enabled ? FlashMode.torch : FlashMode.off);
+      if (mounted) setState(() => _flashlightEnabled = enabled);
+      return true;
+    } on CameraException {
+      return false;
+    }
   }
 
   Future<void> _stopAndPop() async {
-    try {
-      if (_cameraController != null) {
-        if (_cameraController!.value.isStreamingImages) {
-          await _cameraController!.stopImageStream();
-        }
-        await _cameraController!.dispose();
-        _cameraController = null;
-      }
-    } catch (_) {}
+    await _pauseCamera();
     if (mounted) Navigator.pop(context);
   }
 
   @override
   void dispose() {
+    AppSettings.instance.removeListener(_settingsChanged);
+    AppVoiceService.instance.unregisterCamera('/street-smart', this);
+    unawaited(_pauseCamera());
     _pulseController.dispose();
-    _restartListenTimer?.cancel();
-    if (_speech.isListening) {
-      _speech.stop();
-    }
-    _flutterTts.stop();
-    _detectionService.dispose();
-    try {
-      if (_cameraController != null) {
-        if (_cameraController!.value.isStreamingImages) {
-          _cameraController!.stopImageStream();
-        }
-        _cameraController!.dispose();
-      }
-    } catch (_) {}
+    _overlay.dispose();
+    unawaited(_detectionService.dispose());
     super.dispose();
-  }
-
-  Future<void> _startListening() async {
-    if (!mounted || !_speechReady || _isListening) return;
-    _restartListenTimer?.cancel();
-    await _speech.listen(
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
-      listenOptions: SpeechListenOptions(partialResults: true),
-      onResult: _onSpeechResult,
-    );
-    if (mounted) {
-      setState(() => _isListening = _speech.isListening);
-    }
-  }
-
-  void _scheduleListeningRestart() {
-    if (!mounted || !_speechReady || _isListening) return;
-    if (_restartListenTimer?.isActive ?? false) return;
-
-    _restartListenTimer = Timer(_restartListeningDelay, () {
-      if (!mounted) return;
-      _startListening();
-    });
-  }
-
-  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
-    final spoken = result.recognizedWords.trim().toLowerCase();
-    if (spoken.isEmpty) return;
-
-    final normalized = spoken.replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
-
-    if (normalized.contains('flash on') ||
-        normalized.contains('flashlight on')) {
-      if (!_flashlightEnabled &&
-          _cameraController != null &&
-          _cameraController!.value.isInitialized) {
-        await _cameraController!.setFlashMode(FlashMode.torch);
-        setState(() => _flashlightEnabled = true);
-        await _flutterTts.speak('Flashlight on');
-      }
-      return;
-    }
-
-    if (normalized.contains('flash off') ||
-        normalized.contains('flashlight off')) {
-      if (_flashlightEnabled &&
-          _cameraController != null &&
-          _cameraController!.value.isInitialized) {
-        await _cameraController!.setFlashMode(FlashMode.off);
-        setState(() => _flashlightEnabled = false);
-        await _flutterTts.speak('Flashlight off');
-      }
-      return;
-    }
   }
 
   Widget _buildPill({
@@ -408,7 +381,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_isPermissionDenied) {
+    if (_isPermissionDenied || _detectionError != null) {
       return Scaffold(
         backgroundColor: const Color(0xFF0A0E21),
         body: Center(
@@ -417,9 +390,10 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
             children: [
               const Icon(Icons.camera_alt, color: Colors.white54, size: 64),
               const SizedBox(height: 16),
-              const Text(
-                'Camera permission required',
-                style: TextStyle(color: Colors.white, fontSize: 18),
+              Text(
+                context.tr(_detectionError ?? 'Camera permission required'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 18),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
@@ -433,7 +407,7 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                       ? const BorderSide(color: Colors.white, width: 2)
                       : BorderSide.none,
                 ),
-                child: const Text('Go back'),
+                child: Text(context.tr('Go back')),
               ),
             ],
           ),
@@ -441,6 +415,14 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
       );
     }
 
+    final previewSize = _cameraController?.value.previewSize;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final previewWidth = previewSize == null
+        ? 1.0
+        : (portrait ? previewSize.height : previewSize.width);
+    final previewHeight = previewSize == null
+        ? 1.0
+        : (portrait ? previewSize.width : previewSize.height);
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -452,29 +434,41 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                 child: FittedBox(
                   fit: BoxFit.cover,
                   child: SizedBox(
-                    width: _previewW,
-                    height: _previewH,
+                    width: previewWidth,
+                    height: previewHeight,
                     child: CameraPreview(_cameraController!),
                   ),
                 ),
               ),
             ),
 
-          // Layer 2: Bounding boxes scaled to screen
-          if (_isCameraInitialized && _currentDetections.isNotEmpty)
-            RepaintBoundary(
-              child: LayoutBuilder(
-                builder: (ctx, constraints) => CustomPaint(
-                  size: Size(constraints.maxWidth, constraints.maxHeight),
-                  painter: BoundingBoxPainter(
-                    detections: _currentDetections,
-                    camW: _cameraController!.value.previewSize!.width,
-                    camH: _cameraController!.value.previewSize!.height,
-                    screenW: constraints.maxWidth,
-                    screenH: constraints.maxHeight,
+          // Only detection overlays rebuild for incoming inference results.
+          if (_isCameraInitialized)
+            ValueListenableBuilder<
+              ({List<Detection> detections, Size frameSize})
+            >(
+              valueListenable: _overlay,
+              builder: (context, frame, _) {
+                if (frame.detections.isEmpty) return const SizedBox.shrink();
+                return RepaintBoundary(
+                  child: LayoutBuilder(
+                    builder: (ctx, constraints) => CustomPaint(
+                      size: Size(constraints.maxWidth, constraints.maxHeight),
+                      painter: BoundingBoxPainter(
+                        detections: frame.detections,
+                        language: AppSettings.instance.language,
+                        camW: frame.frameSize.width,
+                        camH: frame.frameSize.height,
+                        mirror:
+                            _cameraController!.description.lensDirection ==
+                            CameraLensDirection.front,
+                        screenW: constraints.maxWidth,
+                        screenH: constraints.maxHeight,
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
 
           // Layer 3: Top bar
@@ -503,8 +497,8 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                     onPressed: () =>
                         _handleButtonTap('back_button', 'Go back', _stopAndPop),
                   ),
-                  const Text(
-                    'STREET SMART',
+                  Text(
+                    context.tr('STREET SMART'),
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -534,12 +528,13 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
             left: 0,
             right: 0,
             child: Container(
-              height: 180,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               decoration: const BoxDecoration(
                 color: Color(0xEE0A0E21),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   ScaleTransition(
@@ -567,52 +562,88 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
                   const SizedBox(height: 8),
                   FadeTransition(
                     opacity: _opacityAnimation,
-                    child: const Text(
-                      'SCANNING...',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
+                    child:
+                        ValueListenableBuilder<
+                          ({List<Detection> detections, Size frameSize})
+                        >(
+                          valueListenable: _overlay,
+                          builder: (context, frame, _) => Text(
+                            _currentDetections.isEmpty
+                                ? context.tr('SCANNING...')
+                                : _currentDetections
+                                      .map(
+                                        (d) => localizedObjectName(
+                                          d.label,
+                                          AppSettings.instance.language,
+                                        ).toUpperCase(),
+                                      )
+                                      .toSet()
+                                      .take(4)
+                                      .join(' • '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
                   ),
                   const SizedBox(height: 14),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
                       _buildPill(
                         isOn: _voiceEnabled,
-                        labelOn: 'VOICE: ON',
-                        labelOff: 'VOICE: OFF',
+                        labelOn: context.tr('VOICE: ON'),
+                        labelOff: context.tr('VOICE: OFF'),
                         colorOn: const Color(0xFF8B6914),
                         buttonId: 'voice_toggle_pill',
-                        spokenText:
-                            'Toggle Voice, currently ${_voiceEnabled ? "On" : "Off"}',
-                        onTap: () =>
-                            setState(() => _voiceEnabled = !_voiceEnabled),
-                      ),
-                      const SizedBox(width: 12),
-                      _buildPill(
-                        isOn: _vibrationEnabled,
-                        labelOn: 'VIBRATION: ON',
-                        labelOff: 'VIBRATION: OFF',
-                        colorOn: Colors.purple,
-                        buttonId: 'vibration_toggle_pill',
-                        spokenText:
-                            'Toggle Vibration, currently ${_vibrationEnabled ? "On" : "Off"}',
-                        onTap: () => setState(
-                          () => _vibrationEnabled = !_vibrationEnabled,
+                        spokenText: context.tr(
+                          'Toggle Voice, currently {state}',
+                          {'state': context.tr(_voiceEnabled ? 'On' : 'Off')},
+                        ),
+                        onTap: () => AppSettings.instance.save(
+                          'mizhi_voice_feedback',
+                          !_voiceEnabled,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      _buildPill(
+                        isOn: _vibrationEnabled,
+                        labelOn: context.tr('VIBRATION: ON'),
+                        labelOff: context.tr('VIBRATION: OFF'),
+                        colorOn: Colors.purple,
+                        buttonId: 'vibration_toggle_pill',
+                        spokenText: context.tr(
+                          'Toggle Vibration, currently {state}',
+                          {
+                            'state': context.tr(
+                              _vibrationEnabled ? 'On' : 'Off',
+                            ),
+                          },
+                        ),
+                        onTap: () => AppSettings.instance.save(
+                          'mizhi_vibration',
+                          !_vibrationEnabled,
+                        ),
+                      ),
                       _buildPill(
                         isOn: _flashlightEnabled,
-                        labelOn: 'FLASH: ON',
-                        labelOff: 'FLASH: OFF',
+                        labelOn: context.tr('FLASH: ON'),
+                        labelOff: context.tr('FLASH: OFF'),
                         colorOn: const Color(0xFFFFD700),
                         buttonId: 'flashlight_toggle_pill',
-                        spokenText:
-                            'Toggle Flashlight, currently ${_flashlightEnabled ? "On" : "Off"}',
+                        spokenText: context.tr(
+                          'Toggle Flashlight, currently {state}',
+                          {
+                            'state': context.tr(
+                              _flashlightEnabled ? 'On' : 'Off',
+                            ),
+                          },
+                        ),
                         onTap: () async {
                           if (_cameraController != null &&
                               _cameraController!.value.isInitialized) {
@@ -641,10 +672,12 @@ class _StreetSmartScreenState extends State<StreetSmartScreen>
 
 class BoundingBoxPainter extends CustomPainter {
   final List<Detection> detections;
-  final double camW; // raw camera width  (e.g. 480)
-  final double camH; // raw camera height (e.g. 640)
+  final double camW; // upright camera frame width
+  final double camH; // upright camera frame height
   final double screenW;
   final double screenH;
+  final bool mirror;
+  final String language;
 
   BoundingBoxPainter({
     required this.detections,
@@ -652,14 +685,12 @@ class BoundingBoxPainter extends CustomPainter {
     required this.camH,
     required this.screenW,
     required this.screenH,
+    this.mirror = false,
+    this.language = 'English',
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Camera is rotated 90° on Android — swap W/H for scale
-    final scaleX = screenW / camH;
-    final scaleY = screenH / camW;
-
     final boxPaint = Paint()
       ..color = const Color(0xFFD4AF37)
       ..style = PaintingStyle.stroke
@@ -668,23 +699,11 @@ class BoundingBoxPainter extends CustomPainter {
     final bgPaint = Paint()..color = const Color(0xCC000000);
 
     for (final det in detections) {
-      // Landscape X maps to Portrait Y
-      // Landscape Y maps to Portrait X
-      // For 90-degree CW rotation of the back camera:
-      // The box returned by det.boundingBox is:
-      // det.boundingBox.left = top of portrait screen (X in landscape)
-      // det.boundingBox.top = right of portrait screen (Y in landscape)
-      // wait, actually we just need sizes to be transposed:
-      final boxWOnScreen = det.boundingBox.height * scaleX;
-      final boxHOnScreen = det.boundingBox.width * scaleY;
-
-      // Because left/right might be flipped or transposed simply by multiplying,
-      // let's do the standard transpose: left => top * scaleX, top => left * scaleY
-      final r = Rect.fromLTWH(
-        det.boundingBox.top * scaleX,
-        det.boundingBox.left * scaleY,
-        boxWOnScreen,
-        boxHOnScreen,
+      final r = detectionBoxOnPreview(
+        det.boundingBox,
+        Size(camW, camH),
+        Size(screenW, screenH),
+        mirror: mirror,
       );
 
       canvas.drawRRect(
@@ -693,7 +712,7 @@ class BoundingBoxPainter extends CustomPainter {
       );
 
       final label =
-          '${det.label.toUpperCase()}  ${(det.confidence * 100).toInt()}%';
+          '${localizedObjectName(det.label, language).toUpperCase()}  ${(det.confidence * 100).toInt()}%';
       final tp = TextPainter(
         text: TextSpan(
           text: label,
@@ -704,11 +723,14 @@ class BoundingBoxPainter extends CustomPainter {
           ),
         ),
         textDirection: TextDirection.ltr,
-      )..layout();
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: (screenW - 16).clamp(0.0, screenW));
 
       final pillTop = (r.top - tp.height - 10).clamp(0.0, screenH);
+      final pillLeft = r.left.clamp(0.0, screenW - tp.width - 16);
       final pillRect = Rect.fromLTWH(
-        r.left,
+        pillLeft,
         pillTop,
         tp.width + 16,
         tp.height + 8,
@@ -718,11 +740,17 @@ class BoundingBoxPainter extends CustomPainter {
         RRect.fromRectAndRadius(pillRect, const Radius.circular(6)),
         bgPaint,
       );
-      tp.paint(canvas, Offset(r.left + 8, pillTop + 4));
+      tp.paint(canvas, Offset(pillLeft + 8, pillTop + 4));
     }
   }
 
   @override
   bool shouldRepaint(covariant BoundingBoxPainter old) =>
-      old.detections != detections;
+      old.detections != detections ||
+      old.camW != camW ||
+      old.camH != camH ||
+      old.screenW != screenW ||
+      old.screenH != screenH ||
+      old.mirror != mirror ||
+      old.language != language;
 }

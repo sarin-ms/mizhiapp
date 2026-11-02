@@ -1,4 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mizhi/l10n/language_catalog.dart';
+import 'package:mizhi/l10n/object_names.dart';
+import 'package:mizhi/utils/alert_messages.dart';
 
 /// Returns the current language key (e.g. 'English', 'Hindi') from prefs.
 Future<String> currentLanguage() async {
@@ -9,10 +12,14 @@ Future<String> currentLanguage() async {
 /// Welcome messages per language
 const Map<String, String> welcomeMessages = {
   'English': 'Welcome to Mizhi. Tap Street Smart or Money Sense to begin.',
-  'Hindi': 'मिज़ी में आपका स्वागत है। शुरू करने के लिए स्ट्रीट स्मार्ट या मनी सेंस दबाएँ।',
-  'Tamil': 'மிழிக்கு வரவேற்கிறோம். தொடங்க �ட்ரீட் ஸ்மார்ட் அல்லது மணி சென்ஸ் தட்டவும்.',
-  'Malayalam': 'മിഴിയിലേക്ക് സ്വാഗതം. ആരംഭിക്കാൻ സ്ട്രീറ്റ് സ്മാർട്ട് അല്ലെങ്കിൽ മണി സെൻസ് ടാപ്പ് ചെയ്യൂ.',
-  'Telugu': 'మిజీకి స్వాగతం. ప్రారంభించడానికి స్ట్రీట్ స్మార్ట్ లేదా మనీ సెన్స్ నొక్కండి.',
+  'Hindi':
+      'मिज़ी में आपका स्वागत है। शुरू करने के लिए स्ट्रीट स्मार्ट या मनी सेंस दबाएँ।',
+  'Tamil':
+      'மிழிக்கு வரவேற்கிறோம். தொடங்க ஸ்ட்ரீட் ஸ்மார்ட் அல்லது மணி சென்ஸ் தட்டவும்.',
+  'Malayalam':
+      'മിഴിയിലേക്ക് സ്വാഗതം. ആരംഭിക്കാൻ സ്ട്രീറ്റ് സ്മാർട്ട് അല്ലെങ്കിൽ മണി സെൻസ് ടാപ്പ് ചെയ്യൂ.',
+  'Telugu':
+      'మిజీకి స్వాగతం. ప్రారంభించడానికి స్ట్రీట్ స్మార్ట్ లేదా మనీ సెన్స్ నొక్కండి.',
 };
 
 /// Localized alert messages — keys match the English label from the COCO model.
@@ -119,7 +126,14 @@ String getLocalizedAlert(String label, String language) {
     }
   }
   // Empty means caller should use default English fallback
-  return '';
+  if (language == 'English') return '';
+  final object = localizedObjectName(label, language);
+  final stop = (alertMessages[label] ?? '').toLowerCase().contains('stop');
+  return translate(
+    stop ? '{object} ahead. Stop.' : '{object} detected',
+    language,
+    {'object': object},
+  );
 }
 
 /// Currency announcement templates per language.
@@ -134,6 +148,14 @@ const Map<String, String> currencyTemplates = {
 
 /// Build a currency announcement in the given language.
 String currencyAnnouncement(String denomination, String language) {
-  final tpl = currencyTemplates[language] ?? currencyTemplates['English']!;
-  return tpl.replaceAll('{d}', denomination);
+  return translate('This is a {amount} rupee note', language, {
+    'amount': denomination,
+  });
 }
+
+String directionalAnnouncement(String label, bool moveRight, String language) =>
+    translate(
+      moveRight ? '{object} ahead, move right' : '{object} ahead, move left',
+      language,
+      {'object': localizedObjectName(label, language)},
+    );
